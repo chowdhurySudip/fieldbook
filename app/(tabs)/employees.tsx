@@ -67,9 +67,11 @@ export default function EmployeesScreen() {
           <Text style={styles.employeeWage}>
             Base Wage: {formatCurrency(employee.baseWageRate)}/day
           </Text>
-          <Text style={{ fontSize: 14, color: '#8E8E93' }}>
-            Previous Advances (CF): -{formatCurrency(cfAdvances[employee.id] || 0)}
-          </Text>
+          {(cfAdvances[employee.id] || 0) > 0 && (
+            <Text style={{ fontSize: 14, color: '#FF3B30', fontWeight: '500' }}>
+              Previous Dues: -{formatCurrency(cfAdvances[employee.id] || 0)}
+            </Text>
+          )}
           {employee.contactInfo && (
             <Text style={styles.employeeContact}>{employee.contactInfo}</Text>
           )}
