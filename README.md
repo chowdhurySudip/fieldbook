@@ -1,50 +1,201 @@
-# Welcome to your Expo app 👋
+# FieldBook - Construction Workforce Management
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+FieldBook is a mobile-first labor management application designed for electrical wiring contractors to efficiently track employees, wages, advances, site assignments, and weekly payments.
 
-## Get started
+## Features
 
-1. Install dependencies
+### 🏗️ Core Functionality
+- **Weekly Wage Settlements** - Automated calculations every Tuesday
+- **Daily Attendance Tracking** - With multipliers (0.5× to 2×) and site assignments
+- **Advance Payment Management** - Automatic deductions over multiple weeks
+- **Construction Site Tracking** - Project assignments and financial monitoring
+- **Extra Expense Handling** - Transportation, materials, and miscellaneous costs
 
-   ```bash
-   npm install
-   ```
+### 📱 Mobile-First Design
+- Optimized for mobile devices and job site use
+- Offline data storage with local persistence
+- Touch-friendly interface with intuitive navigation
+- Minimal page count for efficient workflow
 
-2. Start the app
+### 💼 Business Logic
+- Automatic wage calculations with work multipliers
+- Weekly settlement reports (Tuesday to Monday)
+- Advance payment tracking and deduction scheduling
+- Site-wise financial summaries and employee assignments
+- Payment history and dispute resolution support
 
-   ```bash
-   npx expo start
-   ```
+## Getting Started
 
-In the output, you'll find options to open the app in a
+### Prerequisites
+- Node.js LTS (v18+)
+- Expo CLI: `npm install -g @expo/cli`
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
+### Installation
 ```bash
-npm run reset-project
+# Clone the repository
+git clone <repository-url>
+cd FieldBook
+
+# Install dependencies
+npm install
+
+# Start the development server
+npx expo start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+### Demo Credentials
+- **Username:** contractor
+- **Password:** fieldbook2025
 
-## Learn more
+## Usage Guide
 
-To learn more about developing your project with Expo, look at the following resources:
+### 1. Initial Setup
+1. Launch the app and log in with demo credentials
+2. Click "Load Sample Data" to populate with example employees and sites
+3. Navigate through the tabs to explore features
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### 2. Daily Workflow
+1. **Mark Attendance** - Record daily attendance with site assignments
+2. **Manage Employees** - Add/edit employee information and wage rates
+3. **Track Sites** - Create and monitor construction site progress
+4. **Review Settlements** - Check weekly payment calculations
 
-## Join the community
+### 3. Key Screens
 
-Join our community of developers creating universal apps.
+#### Dashboard
+- Overview of active employees and pending wages
+- Quick actions for common tasks
+- Next settlement date and amount
+- Recent activity summary
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+#### Employees
+- List of all employees with status filters
+- Add new employees with wage rates
+- Toggle active/inactive status
+- Search and filter capabilities
+
+#### Sites
+- Active and completed construction sites
+- Site start dates and financial tracking
+- Employee assignment monitoring
+- Project timeline visualization
+
+#### Settlements
+- Weekly payment calculations (Tuesday to Monday)
+- Employee-wise wage breakdowns
+- Advance deductions and extra payments
+- Settlement status tracking
+
+### 4. Attendance Entry
+- Select date for attendance recording
+- Mark present/absent for each employee
+- Assign employees to specific sites
+- Set work multipliers (0.5× to 2× base wage)
+- Record advance payments and extra expenses
+- Automatic wage calculations
+
+## Business Rules
+
+### Wage Calculations
+- **Base Wage:** Daily rate set per employee
+- **Work Multiplier:** 0.5× to 2× based on work complexity
+- **Daily Wage:** Base Wage × Multiplier × Hours Worked
+- **Net Pay:** Daily Wage + Extra Payments - Advances
+
+### Settlement Schedule
+- **Settlement Week:** Tuesday to Monday
+- **Payment Date:** Every Tuesday
+- **Advance Deductions:** Spread over multiple weeks as configured
+
+### Site Management
+- Track total money withdrawn per site
+- Assign employees to sites during attendance
+- Monitor project costs and labor distribution
+- Historical assignment tracking
+
+## Technical Details
+
+### Architecture
+- **Frontend:** React Native with Expo Router
+- **State Management:** React Context with useReducer
+- **Data Persistence:** AsyncStorage for offline support
+- **Navigation:** File-based routing with Expo Router
+- **UI Components:** Custom component library
+
+### Data Storage
+- Local SQLite-like storage via AsyncStorage
+- Automatic data persistence and retrieval
+- Offline-first design with sync capabilities
+- Data backup and recovery support
+
+### Platform Support
+- **Primary:** Mobile (Android/iOS) via Expo
+- **Secondary:** Web browser support
+- **Development:** Expo Go for rapid testing
+
+## Development
+
+### Project Structure
+```
+/app/                   # File-based routing screens
+  /(tabs)/             # Main tab navigation screens
+  /attendance/         # Attendance entry screens
+  /employees/          # Employee management screens
+  /sites/              # Site management screens
+/components/           # Reusable UI components
+/context/              # Global state management
+/services/             # Data services and API calls
+/types/                # TypeScript type definitions
+/utils/                # Helper functions and calculations
+```
+
+### Key Components
+- **Button:** Customizable button with variants
+- **InputField:** Form input with validation
+- **Card:** Content container with styling
+- **StatCard:** Dashboard statistics display
+
+### Build Commands
+```bash
+# Development
+npm start                    # Start Expo dev server
+npm run android             # Android emulator
+npm run ios                 # iOS simulator
+npm run web                 # Web browser
+
+# Quality Assurance
+npm run lint                # ESLint checks
+npm run reset-project       # Reset to clean slate
+```
+
+## Future Enhancements
+
+### Backend Integration
+- RESTful API with Node.js/Express
+- PostgreSQL database for production data
+- User authentication and authorization
+- Multi-contractor support
+
+### Advanced Features
+- Payment integration and processing
+- Photo documentation for attendance
+- GPS tracking for site verification
+- Report generation and export
+- Push notifications for settlements
+
+### Analytics & Reporting
+- Labor cost analysis and trends
+- Site profitability calculations
+- Employee performance metrics
+- Custom report generation
+
+## License
+
+This project is proprietary software designed for electrical contracting businesses.
+
+## Support
+
+For technical support or feature requests, please contact the development team.
+
+## To Do
+1. Start Date on Add Site remains a text input; consider a date picker later for parity with other date flows.

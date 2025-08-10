@@ -1,29 +1,21 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
-
-import { useColorScheme } from '@/hooks/useColorScheme';
+import { Stack } from "expo-router";
+import { AppProvider } from "../context/AppContext";
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const [loaded] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-  });
-
-  if (!loaded) {
-    // Async font loading only occurs in development.
-    return null;
-  }
-
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="+not-found" />
+    <AppProvider>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="login" />
+        <Stack.Screen name="(tabs)" />
+        {/* Show headers for non-tab screens */}
+        <Stack.Screen name="employees/add" options={{ headerShown: true, title: "Add Employee" }} />
+        <Stack.Screen name="employees/edit" options={{ headerShown: true, title: "Edit Employee" }} />
+        <Stack.Screen name="sites/[siteId]" options={{ headerShown: true, title: "Site Details" }} />
+        <Stack.Screen name="sites/add" options={{ headerShown: true, title: "Add Site" }} />
+        <Stack.Screen name="attendance/entry" options={{ headerShown: true, title: "Daily Attendance" }} />
+        <Stack.Screen name="settlements/[employeeId]" options={{ headerShown: true, title: "Settlement Details" }} />
       </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    </AppProvider>
   );
 }

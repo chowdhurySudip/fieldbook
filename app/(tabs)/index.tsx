@@ -1,75 +1,241 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import React, { useMemo } from 'react';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Button, Card, StatCard } from '../../components';
+import { useApp } from '../../context/AppContext';
+import { StorageService } from '../../services/storage';
+import { formatCurrency, getCurrentSettlementWeek, getNextSettlementDate } from '../../utils/calculations';
+import { formatDate, getToday } from '../../utils/dates';
+import { initializeSampleData } from '../../utils/sampleData';
 
-import { HelloWave } from '@/components/HelloWave';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
+export default function DashboardScreen() {
+  const { state, actions } = useApp();
 
-export default function HomeScreen() {
+  const todayWorkedCount = useMemo(() => {
+    const today = getToday();
+    return state.attendanceRecords.filter(r => {
+      const d = new Date(r.date);
+      d.setHours(0,0,0,0);
+      return r.isPresent && d.getTime() === today.getTime();
+    }).length;
+  }, [state.attendanceRecords]);
+
+  const dashboardData = useMemo(() => {
+    const currentWeekStart = getCurrentSettlementWeek();
+    const currentWeekISO = currentWeekStart.toISOString();
+    const nextSettlementDate = getNextSettlementDate();
+    
+    const currentWeekRecords = state.attendanceRecords.filter(record => {
+      const recordDate = new Date(record.date);
+      return recordDate >= currentWeekStart && record.isPresent;
+    });
+    
+    const totalPendingWages = currentWeekRecords.reduce((sum, record) => {
+      const extraPayments = record.extraPayments.reduce((extraSum, payment) => extraSum + payment.amount, 0);
+      return sum + record.calculatedWage + extraPayments - record.advancePayment;
+    }, 0);
+
+    // If this cycle is settled, show the settled total instead of estimate
+    const settledAmount = (state.paymentHistory || [])
+      .filter(h => h.type === 'settlement' && h.settlementWeek === currentWeekISO)
+      .reduce((sum, h) => sum + (h.amount || 0), 0);
+
+    return {
+      totalAmountToShow: settledAmount > 0 ? settledAmount : totalPendingWages,
+      isSettled: settledAmount > 0,
+      nextSettlementDate
+    };
+  }, [state.attendanceRecords, state.paymentHistory]);
+
+  const handleLogout = async () => {
+    await actions.logout();
+    router.replace('../login');
+  };
+
+  const handleLoadSampleData = async () => {
+    if (state.employees.length === 0 && state.sites.length === 0) {
+      await initializeSampleData(actions);
+    }
+  };
+
+  const handleReloadSampleData = async () => {
+    await StorageService.clearDataButKeepUser();
+    await actions.loadData();
+    await initializeSampleData(actions);
+    await actions.loadData();
+  };
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.greeting}>Good day!</Text>
+            <Text style={styles.date}>{formatDate(new Date())}</Text>
+          </View>
+          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+            <Ionicons name="log-out-outline" size={24} color="#FF3B30" />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView style={styles.content} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+          {/* Next Settlement at top and clickable */}
+          <TouchableOpacity onPress={() => router.push('./settlements')}>
+            <Card title="Next Settlement">
+              <View style={styles.settlementInfo}>
+                <Text style={styles.settlementDate}>
+                  {formatDate(dashboardData.nextSettlementDate)}
+                </Text>
+                <Text style={[styles.settlementAmount, { color: dashboardData.isSettled ? '#34C759' : '#007AFF' }]}>
+                  {formatCurrency(dashboardData.totalAmountToShow)}
+                </Text>
+                <Text style={styles.settlementSubtext}>
+                  {dashboardData.isSettled ? 'Settled total payout' : 'Estimated total payout'}
+                </Text>
+              </View>
+            </Card>
+          </TouchableOpacity>
+
+          {/* Today stats */}
+          <View style={{ flexDirection: 'row', marginBottom: 16 }}>
+            <StatCard title="Worked Today" value={todayWorkedCount} subtitle="attendance marked" color="#34C759" />
+          </View>
+
+          {/* Quick Actions */}
+          <Card title="Quick Actions">
+            <View style={styles.quickActions}>
+              <TouchableOpacity 
+                style={styles.actionButton}
+                onPress={() => router.push('../attendance/entry')}
+              >
+                <Ionicons name="time" size={24} color="#007AFF" />
+                <Text style={styles.actionText}>Mark Attendance</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.actionButton}
+                onPress={() => router.push('../employees/add')}
+              >
+                <Ionicons name="person-add" size={24} color="#34C759" />
+                <Text style={styles.actionText}>Add Employee</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.actionButton}
+                onPress={() => router.push('../sites/add')}
+              >
+                <Ionicons name="location" size={24} color="#FF9500" />
+                <Text style={styles.actionText}>Add Site</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.actionButton}
+                onPress={() => router.push('./settlements')}
+              >
+                <Ionicons name="calculator" size={24} color="#5856D6" />
+                <Text style={styles.actionText}>Settlements</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {/* Sample Data Buttons */}
+            {state.employees.length === 0 && state.sites.length === 0 ? (
+              <Button
+                title="Load Sample Data"
+                onPress={handleLoadSampleData}
+                variant="secondary"
+                style={styles.sampleDataButton}
+              />
+            ) : (
+              <Button
+                title="Reload Sample Data (Override)"
+                onPress={handleReloadSampleData}
+                variant="secondary"
+                style={styles.sampleDataButton}
+              />
+            )}
+          </Card>
+        </ScrollView>
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  safeArea: { flex: 1, backgroundColor: '#F2F2F7' },
+  container: {
+    flex: 1,
+    backgroundColor: '#F2F2F7',
   },
-  stepContainer: {
-    gap: 8,
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#C7C7CC',
+  },
+  greeting: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1C1C1E',
+  },
+  date: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  logoutButton: {
+    padding: 8,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  quickActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  actionButton: {
+    width: '48%',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#F2F2F7',
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  actionText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  settlementInfo: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  settlementDate: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1C1C1E',
     marginBottom: 8,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  settlementAmount: {
+    fontSize: 28,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  settlementSubtext: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  sampleDataButton: {
+    marginTop: 16,
   },
 });
