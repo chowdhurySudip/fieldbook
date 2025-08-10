@@ -14,13 +14,52 @@ export default function EmployeesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('active');
   const [cfAdvances, setCfAdvances] = useState<Record<string, number>>({});
+  const [totalDues, setTotalDues] = useState<Record<string, number>>({});
 
   React.useEffect(() => {
     (async () => {
       const a = await StorageService.getCarryForwardAdvances();
       setCfAdvances(a || {});
+      
+      // Calculate total dues (CF advances + current unsettled advances)
+      const duesTotals: Record<string, number> = {};
+      
+      // Start with carry-forward advances
+      for (const [empId, cfAmount] of Object.entries(a || {})) {
+        duesTotals[empId] = cfAmount;
+      }
+      
+      // Add advances from unsettled attendance records
+      const settledWeeks = await StorageService.getSettledWeeks();
+      for (const record of state.attendanceRecords) {
+        if (record.advancePayment > 0) {
+          const recordDate = new Date(record.date);
+          const weekStart = getWednesdayWeekStart(recordDate);
+          const weekKey = `${record.employeeId}|${weekStart.toISOString()}`;
+          
+          // Only include if this week hasn't been settled
+          if (!settledWeeks[weekKey]) {
+            duesTotals[record.employeeId] = (duesTotals[record.employeeId] || 0) + record.advancePayment;
+          }
+        }
+      }
+      
+      setTotalDues(duesTotals);
     })();
-  }, []);
+  }, [state.attendanceRecords]);
+
+  // Helper function to get Wednesday week start
+  const getWednesdayWeekStart = (date: Date): Date => {
+    const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    let daysToSubtract = dayOfWeek - 3; // 3 = Wednesday
+    if (daysToSubtract < 0) {
+      daysToSubtract += 7; // Go to previous Wednesday
+    }
+    const weekStart = new Date(date);
+    weekStart.setDate(date.getDate() - daysToSubtract);
+    weekStart.setHours(0, 0, 0, 0);
+    return weekStart;
+  };
 
   const filteredEmployees = state.employees.filter(employee => {
     const matchesSearch = employee.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -67,9 +106,9 @@ export default function EmployeesScreen() {
           <Text style={styles.employeeWage}>
             Base Wage: {formatCurrency(employee.baseWageRate)}/day
           </Text>
-          {(cfAdvances[employee.id] || 0) > 0 && (
+          {(totalDues[employee.id] || 0) > 0 && (
             <Text style={{ fontSize: 14, color: '#FF3B30', fontWeight: '500' }}>
-              Previous Dues: -{formatCurrency(cfAdvances[employee.id] || 0)}
+              Total Dues: -{formatCurrency(totalDues[employee.id] || 0)}
             </Text>
           )}
           {employee.contactInfo && (
