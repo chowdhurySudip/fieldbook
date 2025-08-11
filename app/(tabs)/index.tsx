@@ -137,6 +137,20 @@ export default function DashboardScreen() {
                 <Ionicons name="calculator" size={24} color="#5856D6" />
                 <Text style={styles.actionText}>Settlements</Text>
               </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.actionButton}
+                onPress={() => router.push('../firebase-test')}
+              >
+                <Ionicons 
+                  name="cloud-outline" 
+                  size={24} 
+                  color="#FF3B30" 
+                />
+                <Text style={styles.actionText}>
+                  Firebase Test
+                </Text>
+              </TouchableOpacity>
             </View>
             
             {/* Sample Data Buttons */}
@@ -215,6 +229,12 @@ const styles = StyleSheet.create({
     color: '#1C1C1E',
     marginTop: 8,
     textAlign: 'center',
+  },
+  actionButtonDisabled: {
+    opacity: 0.5,
+  },
+  actionTextDisabled: {
+    color: '#8E8E93',
   },
   settlementInfo: {
     alignItems: 'center',
