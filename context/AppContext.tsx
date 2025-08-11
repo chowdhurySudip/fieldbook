@@ -2,6 +2,7 @@
 
 import NetInfo from '@react-native-community/netinfo';
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
+import { InteractionManager, AppState as RNAppState } from 'react-native';
 import { AuthService } from '../services/auth';
 import { AttendanceRepo } from '../services/repositories/attendanceRepo';
 import { EmployeesRepo } from '../services/repositories/employeesRepo';
@@ -233,6 +234,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             AttendanceRepo.list(uid),
             PaymentsRepo.list(uid),
           ]);
+          // Only update if there's new data or structure has changed
           if (Array.isArray(remoteAttendance) && remoteAttendance.length >= localAttendance.length) {
             await StorageService.saveAttendanceRecords(remoteAttendance as any);
             att = remoteAttendance as any;
@@ -242,13 +244,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             await StorageService.savePaymentHistory(merged as any);
             payments = merged as any;
           }
-        } catch {}
+        } catch {
+          // ignore errors, rely on local data
+        }
+      } else {
+        // No user, just load local data
+        att = localAttendance;
+        payments = localPayments;
       }
+
+      // Only dispatch when changed to reduce re-renders
+      const shouldSetAttendance = state.attendanceRecords.length !== att.length;
+      const shouldSetPayments = state.paymentHistory.length !== payments.length;
 
       dispatch({ type: 'SET_EMPLOYEES', payload: employees });
       dispatch({ type: 'SET_SITES', payload: sites });
-      dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: att });
-      dispatch({ type: 'SET_PAYMENT_HISTORY', payload: payments });
+      if (shouldSetAttendance) dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: att });
+      if (shouldSetPayments) dispatch({ type: 'SET_PAYMENT_HISTORY', payload: payments });
       dispatch({ type: 'SET_LAST_SYNC', payload: lastSync });
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: 'Failed to load data' });
@@ -453,18 +465,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return Array.from(map.values());
   }
 
+  let syncInFlight = false;
+  let lastSyncRequestedAt = 0;
+  const SYNC_DEBOUNCE_MS = 1500;
+
   // Background sync
   const syncNow = async () => {
     if (!state.user) return;
-    const uid = state.user.id;
+    const nowTs = Date.now();
+    if (syncInFlight || nowTs - lastSyncRequestedAt < SYNC_DEBOUNCE_MS) return;
+    lastSyncRequestedAt = nowTs;
+    syncInFlight = true;
     dispatch({ type: 'SET_SYNC_STATUS', payload: 'syncing' });
     try {
-      // Push local payments
+      await new Promise<void>((resolve) => {
+        InteractionManager.runAfterInteractions(() => resolve());
+      });
+
+      const uid = state.user.id;
+
+      // Push settlements/payments idempotently
       try {
         const localPayments = await StorageService.getPaymentHistory();
         if (localPayments && localPayments.length) {
           for (const p of localPayments) {
-            try { await PaymentsRepo.add(uid, { ...p } as any); } catch {}
+            try {
+              if (p.type === 'settlement') await PaymentsRepo.upsertSettlement(uid, p);
+              else await PaymentsRepo.add(uid, { ...p } as any);
+            } catch {}
           }
         }
       } catch {}
@@ -485,30 +513,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
       } catch {}
 
-      // Pull and merge
+      // Pull incrementally
       try {
+        const since = (await StorageService.getLastSyncTime()) || new Date(0);
         const [remoteEmployees, remoteSites, remoteAttendance, remotePayments] = await Promise.all([
-          EmployeesRepo.list(uid),
-          SitesRepo.list(uid),
-          AttendanceRepo.list(uid),
-          PaymentsRepo.list(uid),
+          EmployeesRepo.listSince(uid, since),
+          SitesRepo.listSince(uid, since),
+          AttendanceRepo.listSince(uid, since),
+          PaymentsRepo.listSince(uid, since),
         ]);
+
         if (remoteEmployees?.length) {
-          await StorageService.saveEmployees(remoteEmployees as any);
-          dispatch({ type: 'SET_EMPLOYEES', payload: remoteEmployees as any });
+          const merged = [...(await StorageService.getEmployees()), ...(remoteEmployees as any)].reduce((acc: any[], item: any) => {
+            if (!acc.find(x => x.id === item.id)) acc.push(item); else acc = acc.map(x => x.id === item.id ? item : x);
+            return acc;
+          }, [] as any[]);
+          await StorageService.saveEmployees(merged as any);
+          if (merged.length !== state.employees.length) dispatch({ type: 'SET_EMPLOYEES', payload: merged as any });
         }
+
         if (remoteSites?.length) {
-          await StorageService.saveSites(remoteSites as any);
-          dispatch({ type: 'SET_SITES', payload: remoteSites as any });
+          const merged = [...(await StorageService.getSites()), ...(remoteSites as any)].reduce((acc: any[], item: any) => {
+            if (!acc.find(x => x.id === item.id)) acc.push(item); else acc = acc.map(x => x.id === item.id ? item : x);
+            return acc;
+          }, [] as any[]);
+          await StorageService.saveSites(merged as any);
+          if (merged.length !== state.sites.length) dispatch({ type: 'SET_SITES', payload: merged as any });
         }
-        if (remoteAttendance?.length >= state.attendanceRecords.length) {
-          await StorageService.saveAttendanceRecords(remoteAttendance as any);
-          dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: remoteAttendance as any });
+
+        if (remoteAttendance?.length) {
+          const merged = [...(await StorageService.getAttendanceRecords()), ...(remoteAttendance as any)].reduce((acc: any[], item: any) => {
+            if (!acc.find(x => x.id === item.id)) acc.push(item); else acc = acc.map(x => x.id === item.id ? item : x);
+            return acc;
+          }, [] as any[]);
+          await StorageService.saveAttendanceRecords(merged as any);
+          if (merged.length !== state.attendanceRecords.length) dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: merged as any });
         }
+
         const localNow = await StorageService.getPaymentHistory();
-        const merged = mergePayments(localNow, (remotePayments as any) || []);
-        await StorageService.savePaymentHistory(merged as any);
-        dispatch({ type: 'SET_PAYMENT_HISTORY', payload: merged as any });
+        const mergedPayments = mergePayments(localNow, (remotePayments as any) || []);
+        if (mergedPayments.length !== state.paymentHistory.length) {
+          await StorageService.savePaymentHistory(mergedPayments as any);
+          dispatch({ type: 'SET_PAYMENT_HISTORY', payload: mergedPayments as any });
+        }
       } catch {}
 
       const now = new Date();
@@ -517,26 +564,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       dispatch({ type: 'SET_SYNC_STATUS', payload: 'ok' });
     } catch (e) {
       dispatch({ type: 'SET_SYNC_STATUS', payload: 'error' });
+    } finally {
+      syncInFlight = false;
     }
   };
 
-  // Triggers: on auth, on foreground, interval, and connectivity regain
+  // Triggers
   useEffect(() => {
     if (!state.user) return;
+
     // initial sync after login
     syncNow();
 
+    // longer interval
     const interval = setInterval(() => {
       syncNow();
-    }, 60 * 1000); // every 60s
+    }, 3 * 60 * 1000); // every 3 minutes
 
     const unsubscribeNet = NetInfo.addEventListener((s) => {
       if (s.isConnected) syncNow();
     });
 
+    const onAppState = (status: string) => {
+      if (status === 'active') syncNow();
+    };
+    const sub = RNAppState.addEventListener('change', onAppState);
+
     return () => {
       clearInterval(interval);
       unsubscribeNet();
+      sub.remove();
     };
   }, [state.user]);
 
