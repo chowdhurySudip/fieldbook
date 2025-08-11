@@ -7,6 +7,7 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
+        <Stack.Screen name="register" />
         <Stack.Screen name="(tabs)" />
         {/* Show headers for non-tab screens */}
         <Stack.Screen name="employees/add" options={{ headerShown: true, title: "Add Employee" }} />

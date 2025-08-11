@@ -1,6 +1,11 @@
 // App context for global state management
 
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
+import { AuthService } from '../services/auth';
+import { AttendanceRepo } from '../services/repositories/attendanceRepo';
+import { EmployeesRepo } from '../services/repositories/employeesRepo';
+import { PaymentsRepo } from '../services/repositories/paymentsRepo';
+import { SitesRepo } from '../services/repositories/sitesRepo';
 import { StorageService } from '../services/storage';
 import { AppState, AttendanceRecord, Employee, PaymentHistory, Site, User } from '../types';
 import { generateId } from '../utils/calculations';
@@ -128,9 +133,11 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
 // Context
 const AppContext = createContext<{
   state: AppState;
-  dispatch: React.Dispatch<AppAction>;
+  dispatch: React.Dispatch<any>;
   actions: {
-    login: (username: string, password: string) => Promise<boolean>;
+    register: (email: string, password: string, name?: string) => Promise<boolean>;
+    login: (email: string, password: string) => Promise<boolean>;
+    resetPassword: (email: string) => Promise<boolean>;
     logout: () => Promise<void>;
     loadData: () => Promise<void>;
     addEmployee: (employee: Omit<Employee, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
@@ -148,28 +155,95 @@ const AppContext = createContext<{
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(appReducer, initialState);
 
-  // Load data on app start
+  // Subscribe to Firebase auth state
   useEffect(() => {
-    loadData();
+    const unsubscribe = AuthService.onAuthStateChanged(async (sessionUser) => {
+      if (sessionUser) {
+        try { StorageService.setNamespace(sessionUser.uid); } catch {}
+        const user: User = {
+          id: sessionUser.uid,
+          username: sessionUser.email || sessionUser.displayName || 'user',
+          lastLoginAt: new Date(),
+          isAuthenticated: true,
+        };
+        dispatch({ type: 'SET_USER', payload: user });
+        try { await StorageService.saveUser(user); } catch {}
+        // Clean-start policy: wipe legacy global (non-namespaced) data
+        try { await StorageService.clearLegacyGlobalData(); } catch {}
+        // Load app data from namespaced cache
+        loadData();
+      } else {
+        try { StorageService.clearNamespace(); } catch {}
+        dispatch({ type: 'SET_USER', payload: null });
+      }
+    });
+    return unsubscribe;
   }, []);
 
+  // Load data on app start (non-user-specific for now)
   const loadData = async () => {
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
-      const [user, employees, sites, attendanceRecords, paymentHistory, lastSync] = await Promise.all([
-        StorageService.getUser(),
-        StorageService.getEmployees(),
-        StorageService.getSites(),
+      const uid = state.user?.id;
+      let employees: Employee[] = [];
+      let sites: Site[] = [];
+
+      if (uid) {
+        try {
+          // Prefer remote fetch for fresh data, then cache locally
+          const remoteEmployees = await EmployeesRepo.list(uid);
+          employees = remoteEmployees.map(e => ({ ...e }));
+          await StorageService.saveEmployees(employees);
+
+          const remoteSites = await SitesRepo.list(uid);
+          sites = remoteSites.map(s => ({ ...s }));
+          await StorageService.saveSites(sites);
+        } catch (e) {
+          // Fallback to local cache if remote fails
+          employees = await StorageService.getEmployees();
+          sites = await StorageService.getSites();
+        }
+      } else {
+        employees = await StorageService.getEmployees();
+        sites = await StorageService.getSites();
+      }
+
+      // Always read local first to avoid overwriting with empty remote
+      const [localAttendance, localPayments, lastSync] = await Promise.all([
         StorageService.getAttendanceRecords(),
         StorageService.getPaymentHistory(),
-        StorageService.getLastSyncTime()
+        StorageService.getLastSyncTime(),
       ]);
 
-      dispatch({ type: 'SET_USER', payload: user });
+      let att: AttendanceRecord[] = localAttendance;
+      let payments: PaymentHistory[] = localPayments;
+
+      // Best-effort remote refresh without wiping local data
+      if (uid) {
+        try {
+          const [remoteAttendance, remotePayments] = await Promise.all([
+            AttendanceRepo.list(uid),
+            PaymentsRepo.list(uid),
+          ]);
+          // Only use remote attendance if it is at least as complete as local
+          if (Array.isArray(remoteAttendance) && remoteAttendance.length >= localAttendance.length) {
+            await StorageService.saveAttendanceRecords(remoteAttendance as any);
+            att = remoteAttendance as any;
+          }
+          // Only replace payments if remote has entries; otherwise keep local to preserve settlements
+          if (Array.isArray(remotePayments) && remotePayments.length > 0) {
+            await StorageService.savePaymentHistory(remotePayments as any);
+            payments = remotePayments as any;
+          }
+        } catch {
+          // Ignore remote errors and keep local
+        }
+      }
+
       dispatch({ type: 'SET_EMPLOYEES', payload: employees });
       dispatch({ type: 'SET_SITES', payload: sites });
-      dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: attendanceRecords });
-      dispatch({ type: 'SET_PAYMENT_HISTORY', payload: paymentHistory });
+      dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: att });
+      dispatch({ type: 'SET_PAYMENT_HISTORY', payload: payments });
       dispatch({ type: 'SET_LAST_SYNC', payload: lastSync });
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: 'Failed to load data' });
@@ -178,22 +252,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const login = async (username: string, password: string): Promise<boolean> => {
+  const register = async (email: string, password: string, name?: string): Promise<boolean> => {
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
-      // Simple authentication - in production, this would call an API
-      if (username === 'contractor' && password === 'fieldbook2025') {
-        const user: User = {
-          id: generateId(),
-          username,
-          lastLoginAt: new Date(),
-          isAuthenticated: true
-        };
-        await StorageService.saveUser(user);
-        dispatch({ type: 'SET_USER', payload: user });
-        return true;
-      }
+      await AuthService.register(email, password, name);
+      return true;
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: 'Registration failed' });
       return false;
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
+  };
+
+  const login = async (email: string, password: string): Promise<boolean> => {
+    dispatch({ type: 'SET_LOADING', payload: true });
+    try {
+      await AuthService.login(email, password);
+      return true;
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: 'Login failed' });
       return false;
@@ -202,24 +278,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const resetPassword = async (email: string): Promise<boolean> => {
+    dispatch({ type: 'SET_LOADING', payload: true });
+    try {
+      await AuthService.sendPasswordReset(email);
+      return true;
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: 'Password reset failed' });
+      return false;
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
+  };
+
   const logout = async (): Promise<void> => {
-    await StorageService.clearUser();
+    await AuthService.logout();
     dispatch({ type: 'SET_USER', payload: null });
   };
 
   const addEmployee = async (employeeData: Omit<Employee, 'id' | 'createdAt' | 'updatedAt'>): Promise<void> => {
+    const uid = state.user?.id;
+    let id = generateId();
+    try {
+      if (uid) {
+        // Create remotely and use the remote id
+        id = await EmployeesRepo.add(uid, employeeData);
+      }
+    } catch (e) {
+      // If remote fails, keep local id and continue
+    }
+
     const employee: Employee = {
       ...employeeData,
-      id: generateId(),
+      id,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
-    
+
     await StorageService.addEmployee(employee);
     dispatch({ type: 'ADD_EMPLOYEE', payload: employee });
   };
 
   const updateEmployee = async (id: string, updates: Partial<Employee>): Promise<void> => {
+    const uid = state.user?.id;
+    try {
+      if (uid) {
+        await EmployeesRepo.update(uid, id, updates);
+      }
+    } catch (e) {
+      // ignore and rely on local until sync
+    }
     await StorageService.updateEmployee(id, updates);
     dispatch({ type: 'UPDATE_EMPLOYEE', payload: { id, updates } });
   };
@@ -227,59 +335,100 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const toggleEmployeeStatus = async (id: string): Promise<void> => {
     const employee = state.employees.find(emp => emp.id === id);
     if (employee) {
-      await StorageService.updateEmployee(id, { isActive: !employee.isActive });
+      const newStatus = !employee.isActive;
+      const uid = state.user?.id;
+      try {
+        if (uid) {
+          await EmployeesRepo.update(uid, id, { isActive: newStatus });
+        }
+      } catch (e) {}
+      await StorageService.updateEmployee(id, { isActive: newStatus });
       dispatch({ type: 'TOGGLE_EMPLOYEE_STATUS', payload: id });
     }
   };
 
   const addSite = async (siteData: Omit<Site, 'id' | 'createdAt' | 'updatedAt'>): Promise<void> => {
+    const uid = state.user?.id;
+    let id = generateId();
+    try {
+      if (uid) {
+        id = await SitesRepo.add(uid, siteData as any);
+      }
+    } catch (e) {}
+
     const site: Site = {
       ...siteData,
-      id: generateId(),
+      id,
       totalWithdrawn: 0,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
-    
+
     await StorageService.addSite(site);
     dispatch({ type: 'ADD_SITE', payload: site });
   };
 
   const updateSite = async (id: string, updates: Partial<Site>): Promise<void> => {
+    const uid = state.user?.id;
+    try {
+      if (uid) {
+        await SitesRepo.update(uid, id, updates);
+      }
+    } catch (e) {}
     await StorageService.updateSite(id, updates);
     dispatch({ type: 'UPDATE_SITE', payload: { id, updates } });
   };
 
   const addAttendanceRecord = async (recordData: Omit<AttendanceRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<void> => {
+    const uid = state.user?.id;
+    let id = generateId();
+    try {
+      if (uid) {
+        id = await AttendanceRepo.add(uid, recordData);
+      }
+    } catch {}
     const record: AttendanceRecord = {
       ...recordData,
-      id: generateId(),
+      id,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
-    
     await StorageService.addAttendanceRecord(record);
     dispatch({ type: 'ADD_ATTENDANCE_RECORD', payload: record });
   };
 
   const updateAttendanceRecord = async (id: string, updates: Partial<AttendanceRecord>): Promise<void> => {
+    const uid = state.user?.id;
+    try {
+      if (uid) {
+        await AttendanceRepo.update(uid, id, updates);
+      }
+    } catch {}
     await StorageService.updateAttendanceRecord(id, updates);
     dispatch({ type: 'UPDATE_ATTENDANCE_RECORD', payload: { id, updates } });
   };
 
   const addPaymentRecord = async (paymentData: Omit<PaymentHistory, 'id' | 'createdAt'>): Promise<void> => {
+    const uid = state.user?.id;
+    let id = generateId();
+    try {
+      if (uid) {
+        id = await PaymentsRepo.add(uid, { ...paymentData });
+      }
+    } catch {}
     const payment: PaymentHistory = {
       ...paymentData,
-      id: generateId(),
-      createdAt: new Date()
+      id,
+      createdAt: new Date(),
     };
-    
     await StorageService.addPaymentRecord(payment);
     dispatch({ type: 'ADD_PAYMENT_RECORD', payload: payment });
   };
 
   const actions = {
+    register,
     login,
+    resetPassword,
     logout,
     loadData,
     addEmployee,
@@ -289,7 +438,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updateSite,
     addAttendanceRecord,
     updateAttendanceRecord,
-    addPaymentRecord
+    addPaymentRecord,
   };
 
   return (

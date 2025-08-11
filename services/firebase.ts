@@ -1,7 +1,9 @@
 // Import the functions you need from the SDKs you need
+// Removed RN persistence import to avoid bundling issues; can re-add when supported
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { getAuth, initializeAuth } from 'firebase/auth';
 import { getFirestore } from "firebase/firestore";
+import { Platform } from 'react-native';
 
 // Read config from Expo public env vars
 const apiKey = process.env.EXPO_PUBLIC_FIREBASE_API_KEY;
@@ -33,7 +35,10 @@ const app = initializeApp(firebaseConfig);
 
 // Initialize Firebase services
 export const db = getFirestore(app);
-export const auth = getAuth(app);
+
+export const auth = Platform.OS === 'web'
+  ? getAuth(app)
+  : initializeAuth(app);
 
 // For development - connect to emulators if in development mode
 if (__DEV__) {
