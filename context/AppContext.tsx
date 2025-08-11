@@ -1,9 +1,11 @@
 // App context for global state management
 
+import NetInfo from '@react-native-community/netinfo';
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { AuthService } from '../services/auth';
 import { AttendanceRepo } from '../services/repositories/attendanceRepo';
 import { EmployeesRepo } from '../services/repositories/employeesRepo';
+import { MetaRepo } from '../services/repositories/metaRepo';
 import { PaymentsRepo } from '../services/repositories/paymentsRepo';
 import { SitesRepo } from '../services/repositories/sitesRepo';
 import { StorageService } from '../services/storage';
@@ -28,7 +30,8 @@ type AppAction =
   | { type: 'SET_PAYMENT_HISTORY'; payload: PaymentHistory[] }
   | { type: 'ADD_PAYMENT_RECORD'; payload: PaymentHistory }
   | { type: 'SET_OFFLINE_STATUS'; payload: boolean }
-  | { type: 'SET_LAST_SYNC'; payload: Date | null };
+  | { type: 'SET_LAST_SYNC'; payload: Date | null }
+  | { type: 'SET_SYNC_STATUS'; payload: 'idle' | 'syncing' | 'ok' | 'error' };
 
 // Initial state
 const initialState: AppState = {
@@ -40,7 +43,8 @@ const initialState: AppState = {
   isLoading: false,
   error: null,
   lastSyncAt: null,
-  isOffline: false
+  isOffline: false,
+  syncStatus: 'idle',
 };
 
 // Reducer
@@ -124,7 +128,10 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     
     case 'SET_LAST_SYNC':
       return { ...state, lastSyncAt: action.payload };
-    
+
+    case 'SET_SYNC_STATUS':
+      return { ...state, syncStatus: action.payload };
+
     default:
       return state;
   }
@@ -148,6 +155,7 @@ const AppContext = createContext<{
     addAttendanceRecord: (record: Omit<AttendanceRecord, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
     updateAttendanceRecord: (id: string, updates: Partial<AttendanceRecord>) => Promise<void>;
     addPaymentRecord: (payment: Omit<PaymentHistory, 'id' | 'createdAt'>) => Promise<void>;
+    syncNow: () => Promise<void>;
   };
 } | null>(null);
 
@@ -208,7 +216,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         sites = await StorageService.getSites();
       }
 
-      // Always read local first to avoid overwriting with empty remote
+      // Always read local first
       const [localAttendance, localPayments, lastSync] = await Promise.all([
         StorageService.getAttendanceRecords(),
         StorageService.getPaymentHistory(),
@@ -218,26 +226,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let att: AttendanceRecord[] = localAttendance;
       let payments: PaymentHistory[] = localPayments;
 
-      // Best-effort remote refresh without wiping local data
+      // Best-effort remote refresh with merge
       if (uid) {
         try {
           const [remoteAttendance, remotePayments] = await Promise.all([
             AttendanceRepo.list(uid),
             PaymentsRepo.list(uid),
           ]);
-          // Only use remote attendance if it is at least as complete as local
           if (Array.isArray(remoteAttendance) && remoteAttendance.length >= localAttendance.length) {
             await StorageService.saveAttendanceRecords(remoteAttendance as any);
             att = remoteAttendance as any;
           }
-          // Only replace payments if remote has entries; otherwise keep local to preserve settlements
-          if (Array.isArray(remotePayments) && remotePayments.length > 0) {
-            await StorageService.savePaymentHistory(remotePayments as any);
-            payments = remotePayments as any;
+          if (Array.isArray(remotePayments)) {
+            const merged = mergePayments(localPayments, remotePayments as any);
+            await StorageService.savePaymentHistory(merged as any);
+            payments = merged as any;
           }
-        } catch {
-          // Ignore remote errors and keep local
-        }
+        } catch {}
       }
 
       dispatch({ type: 'SET_EMPLOYEES', payload: employees });
@@ -425,6 +430,116 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     dispatch({ type: 'ADD_PAYMENT_RECORD', payload: payment });
   };
 
+  // Build a stable key for payments to merge local and remote safely
+  function paymentKey(p: PaymentHistory): string {
+    if (p.type === 'settlement' && p.employeeId && p.settlementWeek) {
+      return `settlement:${p.employeeId}:${p.settlementWeek}`;
+    }
+    if (p.relatedAttendanceId) {
+      return `attendance:${p.relatedAttendanceId}:${p.type}`;
+    }
+    if ((p as any).siteId && p.type === 'site-withdrawal') {
+      return `sitewd:${(p as any).siteId}:${new Date(p.date).toDateString()}`;
+    }
+    if ((p as any).id) return `id:${(p as any).id}`;
+    // Fallback weak key
+    return `${p.type}:${p.employeeId || ''}:${new Date(p.date).toISOString()}:${p.amount}`;
+  }
+
+  function mergePayments(local: PaymentHistory[], remote: PaymentHistory[]): PaymentHistory[] {
+    const map = new Map<string, PaymentHistory>();
+    for (const p of local || []) map.set(paymentKey(p), p);
+    for (const p of remote || []) map.set(paymentKey(p), p); // prefer remote on conflict
+    return Array.from(map.values());
+  }
+
+  // Background sync
+  const syncNow = async () => {
+    if (!state.user) return;
+    const uid = state.user.id;
+    dispatch({ type: 'SET_SYNC_STATUS', payload: 'syncing' });
+    try {
+      // Push local payments
+      try {
+        const localPayments = await StorageService.getPaymentHistory();
+        if (localPayments && localPayments.length) {
+          for (const p of localPayments) {
+            try { await PaymentsRepo.add(uid, { ...p } as any); } catch {}
+          }
+        }
+      } catch {}
+
+      // Push meta
+      try {
+        const [cfAdv, cfPay, settled, cfByWeek] = await Promise.all([
+          StorageService.getCarryForwardAdvances(),
+          StorageService.getCarryForwardExtras(),
+          StorageService.getSettledWeeks(),
+          StorageService.getCarryForwardAdvancesByWeek(),
+        ]);
+        await MetaRepo.setState(uid, {
+          cfAdvances: cfAdv,
+          cfPayables: cfPay,
+          settledWeeks: settled,
+          cfAdvByWeek: cfByWeek,
+        });
+      } catch {}
+
+      // Pull and merge
+      try {
+        const [remoteEmployees, remoteSites, remoteAttendance, remotePayments] = await Promise.all([
+          EmployeesRepo.list(uid),
+          SitesRepo.list(uid),
+          AttendanceRepo.list(uid),
+          PaymentsRepo.list(uid),
+        ]);
+        if (remoteEmployees?.length) {
+          await StorageService.saveEmployees(remoteEmployees as any);
+          dispatch({ type: 'SET_EMPLOYEES', payload: remoteEmployees as any });
+        }
+        if (remoteSites?.length) {
+          await StorageService.saveSites(remoteSites as any);
+          dispatch({ type: 'SET_SITES', payload: remoteSites as any });
+        }
+        if (remoteAttendance?.length >= state.attendanceRecords.length) {
+          await StorageService.saveAttendanceRecords(remoteAttendance as any);
+          dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: remoteAttendance as any });
+        }
+        const localNow = await StorageService.getPaymentHistory();
+        const merged = mergePayments(localNow, (remotePayments as any) || []);
+        await StorageService.savePaymentHistory(merged as any);
+        dispatch({ type: 'SET_PAYMENT_HISTORY', payload: merged as any });
+      } catch {}
+
+      const now = new Date();
+      await StorageService.setLastSyncTime(now);
+      dispatch({ type: 'SET_LAST_SYNC', payload: now });
+      dispatch({ type: 'SET_SYNC_STATUS', payload: 'ok' });
+    } catch (e) {
+      dispatch({ type: 'SET_SYNC_STATUS', payload: 'error' });
+    }
+  };
+
+  // Triggers: on auth, on foreground, interval, and connectivity regain
+  useEffect(() => {
+    if (!state.user) return;
+    // initial sync after login
+    syncNow();
+
+    const interval = setInterval(() => {
+      syncNow();
+    }, 60 * 1000); // every 60s
+
+    const unsubscribeNet = NetInfo.addEventListener((s) => {
+      if (s.isConnected) syncNow();
+    });
+
+    return () => {
+      clearInterval(interval);
+      unsubscribeNet();
+    };
+  }, [state.user]);
+
   const actions = {
     register,
     login,
@@ -439,6 +554,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addAttendanceRecord,
     updateAttendanceRecord,
     addPaymentRecord,
+    syncNow,
   };
 
   return (
