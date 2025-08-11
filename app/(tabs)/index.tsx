@@ -67,6 +67,33 @@ export default function DashboardScreen() {
     await actions.loadData();
   };
 
+  const handleResetData = async () => {
+    try {
+      // Clear local per-user namespaced data
+      await StorageService.clearAllData();
+      // Optionally, also clear remote data if user is signed in
+      const uid = state.user?.id;
+      if (uid) {
+        try {
+          // Best-effort remote wipe: delete docs in payments, attendance, employees, sites
+          // Note: This is a temporary dev-only helper; not optimized
+          const { db } = await import('../../services/firebase');
+          const { collection, getDocs, deleteDoc, doc } = await import('firebase/firestore');
+          const subcollections = ['payments', 'attendance', 'employees', 'sites'];
+          for (const sub of subcollections) {
+            const colRef = collection(db, `users/${uid}/${sub}`);
+            const snap = await getDocs(colRef);
+            for (const d of snap.docs) {
+              await deleteDoc(doc(db, `users/${uid}/${sub}/${d.id}`));
+            }
+          }
+        } catch {}
+      }
+      // Reload app state
+      await actions.loadData();
+    } catch (e) {}
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
@@ -81,6 +108,11 @@ export default function DashboardScreen() {
         </View>
 
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+          {/* Temporary Reset Data button (DEV ONLY) */}
+          <Card>
+            <Button title="Reset Data (Temp)" onPress={handleResetData} variant="secondary" />
+          </Card>
+
           {/* Next Settlement at top and clickable */}
           <TouchableOpacity onPress={() => router.push('./settlements')}>
             <Card title="Next Settlement">

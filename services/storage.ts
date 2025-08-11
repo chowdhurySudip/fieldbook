@@ -14,13 +14,38 @@ const STORAGE_KEYS = {
   CF_EXTRAS: 'fieldbook_cf_extras',
   SETTLED_WEEKS: 'fieldbook_settled_weeks',
   CF_ADV_BY_WEEK: 'fieldbook_cf_adv_by_week', // key: `${empId}|${weekStartISO}` => number (prev CF at start of week)
-};
+} as const;
 
 export class StorageService {
+  // Namespace prefix for per-user isolation in local cache
+  private static namespacePrefix: string = '';
+
+  /**
+   * Set the current user namespace. All keys (except USER) will be prefixed with `${uid}::`.
+   */
+  static setNamespace(uid: string) {
+    this.namespacePrefix = `${uid}::`;
+  }
+
+  /**
+   * Clear the namespace (used on logout). Subsequent reads/writes will use global keys again.
+   */
+  static clearNamespace() {
+    this.namespacePrefix = '';
+  }
+
+  /**
+   * Build the storage key, applying namespace except for the global USER key.
+   */
+  private static k(key: (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS]) {
+    if (key === STORAGE_KEYS.USER) return key; // keep user global
+    return `${this.namespacePrefix}${key}`;
+  }
+
   // Employee operations
   static async getEmployees(): Promise<Employee[]> {
     try {
-      const data = await AsyncStorage.getItem(STORAGE_KEYS.EMPLOYEES);
+      const data = await AsyncStorage.getItem(this.k(STORAGE_KEYS.EMPLOYEES));
       return data ? JSON.parse(data) : [];
     } catch (error) {
       console.error('Error getting employees:', error);
@@ -30,7 +55,7 @@ export class StorageService {
 
   static async saveEmployees(employees: Employee[]): Promise<void> {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.EMPLOYEES, JSON.stringify(employees));
+      await AsyncStorage.setItem(this.k(STORAGE_KEYS.EMPLOYEES), JSON.stringify(employees));
     } catch (error) {
       console.error('Error saving employees:', error);
       throw error;
@@ -61,7 +86,7 @@ export class StorageService {
   // Site operations
   static async getSites(): Promise<Site[]> {
     try {
-      const data = await AsyncStorage.getItem(STORAGE_KEYS.SITES);
+      const data = await AsyncStorage.getItem(this.k(STORAGE_KEYS.SITES));
       return data ? JSON.parse(data) : [];
     } catch (error) {
       console.error('Error getting sites:', error);
@@ -71,7 +96,7 @@ export class StorageService {
 
   static async saveSites(sites: Site[]): Promise<void> {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.SITES, JSON.stringify(sites));
+      await AsyncStorage.setItem(this.k(STORAGE_KEYS.SITES), JSON.stringify(sites));
     } catch (error) {
       console.error('Error saving sites:', error);
       throw error;
@@ -96,7 +121,7 @@ export class StorageService {
   // Attendance operations
   static async getAttendanceRecords(): Promise<AttendanceRecord[]> {
     try {
-      const data = await AsyncStorage.getItem(STORAGE_KEYS.ATTENDANCE_RECORDS);
+      const data = await AsyncStorage.getItem(this.k(STORAGE_KEYS.ATTENDANCE_RECORDS));
       return data ? JSON.parse(data) : [];
     } catch (error) {
       console.error('Error getting attendance records:', error);
@@ -106,7 +131,7 @@ export class StorageService {
 
   static async saveAttendanceRecords(records: AttendanceRecord[]): Promise<void> {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.ATTENDANCE_RECORDS, JSON.stringify(records));
+      await AsyncStorage.setItem(this.k(STORAGE_KEYS.ATTENDANCE_RECORDS), JSON.stringify(records));
     } catch (error) {
       console.error('Error saving attendance records:', error);
       throw error;
@@ -131,7 +156,7 @@ export class StorageService {
   // Payment history operations
   static async getPaymentHistory(): Promise<PaymentHistory[]> {
     try {
-      const data = await AsyncStorage.getItem(STORAGE_KEYS.PAYMENT_HISTORY);
+      const data = await AsyncStorage.getItem(this.k(STORAGE_KEYS.PAYMENT_HISTORY));
       return data ? JSON.parse(data) : [];
     } catch (error) {
       console.error('Error getting payment history:', error);
@@ -141,7 +166,7 @@ export class StorageService {
 
   static async savePaymentHistory(history: PaymentHistory[]): Promise<void> {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.PAYMENT_HISTORY, JSON.stringify(history));
+      await AsyncStorage.setItem(this.k(STORAGE_KEYS.PAYMENT_HISTORY), JSON.stringify(history));
     } catch (error) {
       console.error('Error saving payment history:', error);
       throw error;
@@ -154,7 +179,7 @@ export class StorageService {
     await this.savePaymentHistory(history);
   }
 
-  // User operations
+  // User operations (global key)
   static async getUser(): Promise<User | null> {
     try {
       const data = await AsyncStorage.getItem(STORAGE_KEYS.USER);
@@ -182,10 +207,10 @@ export class StorageService {
     }
   }
 
-  // Sync operations
+  // Sync operations (per-user)
   static async getLastSyncTime(): Promise<Date | null> {
     try {
-      const data = await AsyncStorage.getItem(STORAGE_KEYS.LAST_SYNC);
+      const data = await AsyncStorage.getItem(this.k(STORAGE_KEYS.LAST_SYNC));
       return data ? new Date(data) : null;
     } catch (error) {
       console.error('Error getting last sync time:', error);
@@ -195,16 +220,16 @@ export class StorageService {
 
   static async setLastSyncTime(date: Date): Promise<void> {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.LAST_SYNC, date.toISOString());
+      await AsyncStorage.setItem(this.k(STORAGE_KEYS.LAST_SYNC), date.toISOString());
     } catch (error) {
       console.error('Error setting last sync time:', error);
     }
   }
 
-  // Carry-forward balances
+  // Carry-forward balances (per-user)
   static async getCarryForwardAdvances(): Promise<Record<string, number>> {
     try {
-      const data = await AsyncStorage.getItem(STORAGE_KEYS.CF_ADVANCES);
+      const data = await AsyncStorage.getItem(this.k(STORAGE_KEYS.CF_ADVANCES));
       return data ? JSON.parse(data) : {};
     } catch (error) {
       console.error('Error getting carry forward advances:', error);
@@ -214,7 +239,7 @@ export class StorageService {
 
   static async setCarryForwardAdvances(map: Record<string, number>): Promise<void> {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.CF_ADVANCES, JSON.stringify(map));
+      await AsyncStorage.setItem(this.k(STORAGE_KEYS.CF_ADVANCES), JSON.stringify(map));
     } catch (error) {
       console.error('Error saving carry forward advances:', error);
       throw error;
@@ -223,7 +248,7 @@ export class StorageService {
 
   static async getCarryForwardExtras(): Promise<Record<string, number>> {
     try {
-      const data = await AsyncStorage.getItem(STORAGE_KEYS.CF_EXTRAS);
+      const data = await AsyncStorage.getItem(this.k(STORAGE_KEYS.CF_EXTRAS));
       return data ? JSON.parse(data) : {};
     } catch (error) {
       console.error('Error getting carry forward extras:', error);
@@ -233,7 +258,7 @@ export class StorageService {
 
   static async setCarryForwardExtras(map: Record<string, number>): Promise<void> {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.CF_EXTRAS, JSON.stringify(map));
+      await AsyncStorage.setItem(this.k(STORAGE_KEYS.CF_EXTRAS), JSON.stringify(map));
     } catch (error) {
       console.error('Error saving carry forward extras:', error);
       throw error;
@@ -243,7 +268,7 @@ export class StorageService {
   // Per-week carry-forward advances (prev CF at week start)
   static async getCarryForwardAdvancesByWeek(): Promise<Record<string, number>> {
     try {
-      const data = await AsyncStorage.getItem(STORAGE_KEYS.CF_ADV_BY_WEEK);
+      const data = await AsyncStorage.getItem(this.k(STORAGE_KEYS.CF_ADV_BY_WEEK));
       return data ? JSON.parse(data) : {};
     } catch (error) {
       console.error('Error getting per-week carry forward advances:', error);
@@ -253,7 +278,7 @@ export class StorageService {
 
   static async setCarryForwardAdvancesByWeek(map: Record<string, number>): Promise<void> {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.CF_ADV_BY_WEEK, JSON.stringify(map));
+      await AsyncStorage.setItem(this.k(STORAGE_KEYS.CF_ADV_BY_WEEK), JSON.stringify(map));
     } catch (error) {
       console.error('Error saving per-week carry forward advances:', error);
       throw error;
@@ -263,7 +288,7 @@ export class StorageService {
   // Settled weeks map (key: `${employeeId}|${weekStartISO}` => true)
   static async getSettledWeeks(): Promise<Record<string, boolean>> {
     try {
-      const data = await AsyncStorage.getItem(STORAGE_KEYS.SETTLED_WEEKS);
+      const data = await AsyncStorage.getItem(this.k(STORAGE_KEYS.SETTLED_WEEKS));
       return data ? JSON.parse(data) : {};
     } catch (error) {
       console.error('Error getting settled weeks:', error);
@@ -273,17 +298,19 @@ export class StorageService {
 
   static async setSettledWeeks(map: Record<string, boolean>): Promise<void> {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.SETTLED_WEEKS, JSON.stringify(map));
+      await AsyncStorage.setItem(this.k(STORAGE_KEYS.SETTLED_WEEKS), JSON.stringify(map));
     } catch (error) {
       console.error('Error saving settled weeks:', error);
       throw error;
     }
   }
 
-  // Clear all data
+  // Clear all data for the current namespace (does not remove global USER)
   static async clearAllData(): Promise<void> {
     try {
-      const keys = Object.values(STORAGE_KEYS);
+      const keys = Object.values(STORAGE_KEYS)
+        .filter(k => k !== STORAGE_KEYS.USER)
+        .map(k => this.k(k as any));
       await AsyncStorage.multiRemove(keys);
     } catch (error) {
       console.error('Error clearing all data:', error);
@@ -291,7 +318,7 @@ export class StorageService {
     }
   }
 
-  // Clear app data but keep user and last sync
+  // Clear app data but keep user and last sync (per-user)
   static async clearDataButKeepUser(): Promise<void> {
     try {
       const keysToClear = [
@@ -301,11 +328,31 @@ export class StorageService {
         STORAGE_KEYS.PAYMENT_HISTORY,
         STORAGE_KEYS.CF_ADVANCES,
         STORAGE_KEYS.CF_EXTRAS,
-      ];
+      ].map(k => this.k(k as any));
       await AsyncStorage.multiRemove(keysToClear);
     } catch (error) {
       console.error('Error clearing data (except user):', error);
       throw error;
+    }
+  }
+
+  // Clear legacy non-namespaced keys (one-time cleanup)
+  static async clearLegacyGlobalData(): Promise<void> {
+    try {
+      const legacyKeys = [
+        STORAGE_KEYS.EMPLOYEES,
+        STORAGE_KEYS.SITES,
+        STORAGE_KEYS.ATTENDANCE_RECORDS,
+        STORAGE_KEYS.PAYMENT_HISTORY,
+        STORAGE_KEYS.LAST_SYNC,
+        STORAGE_KEYS.CF_ADVANCES,
+        STORAGE_KEYS.CF_EXTRAS,
+        STORAGE_KEYS.SETTLED_WEEKS,
+        STORAGE_KEYS.CF_ADV_BY_WEEK,
+      ];
+      await AsyncStorage.multiRemove(legacyKeys);
+    } catch (error) {
+      console.error('Error clearing legacy global data:', error);
     }
   }
 }

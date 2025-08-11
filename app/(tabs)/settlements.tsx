@@ -53,8 +53,9 @@ export default function SettlementsScreen() {
   // New: cache payment history so Settled Amount uses actual paid total
   const [paymentHistory, setPaymentHistory] = useState<any[]>([]);
 
-  // Load carry-forward balances and history
+  // Load carry-forward balances and history WHEN the user is available (namespace set)
   useEffect(() => {
+    if (!state.user) return; // wait until auth sets the storage namespace
     (async () => {
       const [a, p, settled, cfByWeek, history] = await Promise.all([
         StorageService.getCarryForwardAdvances(),
@@ -69,7 +70,7 @@ export default function SettlementsScreen() {
       setCfAdvByWeek((cfByWeek as any) || {});
       setPaymentHistory((history as any) || []);
     })();
-  }, []);
+  }, [state.user]);
 
   // Mark Wednesdays for current month
   useEffect(() => {
