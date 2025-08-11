@@ -2,17 +2,30 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Read config from Expo public env vars
+const apiKey = process.env.EXPO_PUBLIC_FIREBASE_API_KEY;
+const authDomain = process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN;
+const projectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
+const storageBucket = process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET;
+const messagingSenderId = process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
+const appId = process.env.EXPO_PUBLIC_FIREBASE_APP_ID;
+
+if (!apiKey || !authDomain || !projectId || !storageBucket || !messagingSenderId || !appId) {
+  // Fail fast with a clear message during development if any var is missing
+  throw new Error(
+    "Missing Firebase environment variables. Please set EXPO_PUBLIC_FIREBASE_* in your .env file."
+  );
+}
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyBKYriWhMha8YY0ucqnWAhiSL8EkpMvpwk",
-  authDomain: "fieldbook-sudip.firebaseapp.com",
-  projectId: "fieldbook-sudip",
-  storageBucket: "fieldbook-sudip.firebasestorage.app",
-  messagingSenderId: "500155606936",
-  appId: "1:500155606936:web:1cc04454059b46faf7eded"
+  apiKey,
+  authDomain,
+  projectId,
+  storageBucket,
+  messagingSenderId,
+  appId,
 };
 
 // Initialize Firebase

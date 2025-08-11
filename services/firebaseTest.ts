@@ -10,44 +10,74 @@ export class FirebaseConnectionTester {
   private testCollectionName = 'test-connection';
 
   /**
+   * Ensure we have an authenticated user for rules that require auth.
+   * Returns the user uid and whether we should sign out after the test.
+   */
+  private async ensureAuthUser(): Promise<{ uid: string; shouldSignOut: boolean }> {
+    const existing = auth.currentUser;
+    if (existing) {
+      return { uid: existing.uid, shouldSignOut: false };
+    }
+    // Fall back to anonymous auth for testing if enabled
+    const cred = await signInAnonymously(auth);
+    return { uid: cred.user.uid, shouldSignOut: true };
+  }
+
+  /**
    * Test Firestore connection by writing and reading a document
+   * NOTE: With per-user security rules, we write under users/{uid}/...
    */
   async testFirestore(): Promise<{ success: boolean; message: string }> {
+    let shouldSignOut = false;
     try {
+      const { uid, shouldSignOut: signOutAfter } = await this.ensureAuthUser();
+      shouldSignOut = signOutAfter;
+
       const testData = {
         timestamp: new Date().toISOString(),
         message: 'Firebase connection test',
-        appName: 'FieldBook'
+        appName: 'FieldBook',
+        uid,
       };
 
-      // Write test document
-      const testDocRef = doc(collection(db, this.testCollectionName), this.testDocId);
+      // Write test document under per-user path to satisfy security rules
+      const userScopedCollection = collection(db, `users/${uid}/${this.testCollectionName}`);
+      const testDocRef = doc(userScopedCollection, this.testDocId);
       await setDoc(testDocRef, testData);
 
       // Read test document
       const docSnap = await getDoc(testDocRef);
-      
+
       if (docSnap.exists()) {
         const data = docSnap.data();
-        
+
         // Clean up - delete test document
         await deleteDoc(testDocRef);
-        
+
         return {
           success: true,
-          message: `Firestore connection successful! Test data: ${JSON.stringify(data)}`
+          message: `Firestore connection successful! Test data: ${JSON.stringify(data)}`,
         };
       } else {
         return {
           success: false,
-          message: 'Failed to read test document from Firestore'
+          message: 'Failed to read test document from Firestore',
         };
       }
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error';
+      // Provide guidance if rules block root collections or auth is missing
+      const guidance =
+        ' Ensure you are authenticated and your Firestore rules allow access under users/{uid}/...';
       return {
         success: false,
-        message: `Firestore connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        message: `Firestore connection failed: ${errMsg}.${guidance}`,
       };
+    } finally {
+      // Sign out only if we signed in anonymously for the test
+      if (shouldSignOut) {
+        try { await signOut(auth); } catch {}
+      }
     }
   }
 
@@ -63,20 +93,20 @@ export class FirebaseConnectionTester {
       if (user) {
         // Sign out to clean up
         await signOut(auth);
-        
+
         return {
           success: true,
-          message: `Auth connection successful! Anonymous user ID: ${user.uid}`
+          message: `Auth connection successful! Anonymous user ID: ${user.uid}`,
         };
       } else {
         return {
           success: false,
-          message: 'Failed to authenticate anonymously'
+          message: 'Failed to authenticate anonymously',
         };
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
+
       // Provide specific guidance for common auth setup issues
       if (errorMessage.includes('admin-restricted-operation')) {
         return {
@@ -90,10 +120,10 @@ Setup Steps:
 4. Enable "Anonymous" provider
 5. Save and try again
 
-Error: ${errorMessage}`
+Error: ${errorMessage}`,
         };
       }
-      
+
       if (errorMessage.includes('auth/configuration-not-found')) {
         return {
           success: false,
@@ -106,13 +136,13 @@ Setup Steps:
 4. Set up Authentication service
 5. Enable Anonymous sign-in method
 
-Error: ${errorMessage}`
+Error: ${errorMessage}`,
         };
       }
-      
+
       return {
         success: false,
-        message: `Auth connection failed: ${errorMessage}`
+        message: `Auth connection failed: ${errorMessage}`,
       };
     }
   }
@@ -126,20 +156,20 @@ Error: ${errorMessage}`
     overall: boolean;
   }> {
     console.log('🔥 Starting Firebase connection tests...');
-    
+
     const firestoreResult = await this.testFirestore();
     console.log('📄 Firestore test:', firestoreResult.success ? '✅' : '❌', firestoreResult.message);
-    
+
     const authResult = await this.testAuth();
     console.log('🔐 Auth test:', authResult.success ? '✅' : '❌', authResult.message);
-    
+
     const overall = firestoreResult.success && authResult.success;
     console.log('🎯 Overall result:', overall ? '✅ All tests passed!' : '❌ Some tests failed');
-    
+
     return {
       firestore: firestoreResult,
       auth: authResult,
-      overall
+      overall,
     };
   }
 }
