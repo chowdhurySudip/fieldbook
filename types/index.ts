@@ -105,6 +105,7 @@ export interface AppState {
   error: string | null;
   lastSyncAt: Date | null;
   isOffline: boolean;
+  syncStatus?: 'idle' | 'syncing' | 'ok' | 'error';
 }
 
 // Navigation types

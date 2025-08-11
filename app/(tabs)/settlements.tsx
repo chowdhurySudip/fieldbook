@@ -6,6 +6,7 @@ import { Calendar } from 'react-native-calendars';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Card, NumberInput } from '../../components';
 import { useApp } from '../../context/AppContext';
+import { MetaRepo } from '../../services/repositories/metaRepo';
 import { StorageService } from '../../services/storage';
 import { WeeklySettlement } from '../../types';
 import { calculateWeeklySettlement, formatCurrency, getCurrentSettlementWeek } from '../../utils/calculations';
@@ -53,10 +54,47 @@ export default function SettlementsScreen() {
   // New: cache payment history so Settled Amount uses actual paid total
   const [paymentHistory, setPaymentHistory] = useState<any[]>([]);
 
+  // Keep local paymentHistory in sync with global state
+  useEffect(() => {
+    setPaymentHistory(state.paymentHistory || []);
+  }, [state.paymentHistory]);
+
   // Load carry-forward balances and history WHEN the user is available (namespace set)
   useEffect(() => {
     if (!state.user) return; // wait until auth sets the storage namespace
     (async () => {
+      try {
+        const uid = state.user?.id;
+        if (uid) {
+          const cloudState = await MetaRepo.getState(uid);
+          // Always read local for merge
+          const [localCfAdv, localCfPay, localSettled, localCfByWeek, localHist] = await Promise.all([
+            StorageService.getCarryForwardAdvances(),
+            StorageService.getCarryForwardExtras && StorageService.getCarryForwardExtras(),
+            StorageService.getSettledWeeks ? StorageService.getSettledWeeks() : Promise.resolve({}),
+            StorageService.getCarryForwardAdvancesByWeek ? StorageService.getCarryForwardAdvancesByWeek() : Promise.resolve({}),
+            StorageService.getPaymentHistory ? StorageService.getPaymentHistory() : Promise.resolve([]),
+          ]);
+          if (cloudState) {
+            // Merge cloud over local to avoid losing values not yet synced
+            setCfAdvances({ ...(localCfAdv || {}), ...(cloudState.cfAdvances || {}) });
+            setCfPayables({ ...((localCfPay as any) || {}), ...((cloudState.cfPayables as any) || {}) });
+            setSettledFlags({ ...((localSettled as any) || {}), ...((cloudState.settledWeeks as any) || {}) });
+            setCfAdvByWeek({ ...((localCfByWeek as any) || {}), ...((cloudState.cfAdvByWeek as any) || {}) });
+            // Keep payment history from global if present, else local
+            setPaymentHistory((state.paymentHistory && state.paymentHistory.length ? state.paymentHistory : (localHist as any)) || []);
+            return;
+          }
+          // No cloud state; use local entirely
+          setCfAdvances(localCfAdv || {});
+          setCfPayables((localCfPay as any) || {});
+          setSettledFlags((localSettled as any) || {});
+          setCfAdvByWeek((localCfByWeek as any) || {});
+          setPaymentHistory((state.paymentHistory && state.paymentHistory.length ? state.paymentHistory : (localHist as any)) || []);
+          return;
+        }
+      } catch {}
+      // Fallback local path if any error
       const [a, p, settled, cfByWeek, history] = await Promise.all([
         StorageService.getCarryForwardAdvances(),
         StorageService.getCarryForwardExtras && StorageService.getCarryForwardExtras(),
@@ -68,7 +106,7 @@ export default function SettlementsScreen() {
       setCfPayables((p as any) || {});
       setSettledFlags((settled as any) || {});
       setCfAdvByWeek((cfByWeek as any) || {});
-      setPaymentHistory((history as any) || []);
+      setPaymentHistory((state.paymentHistory && state.paymentHistory.length ? state.paymentHistory : (history as any)) || []);
     })();
   }, [state.user]);
 
@@ -132,15 +170,17 @@ export default function SettlementsScreen() {
   // New: settled total should come from payment history
   const weekStartISO = useMemo(() => selectedWeek.toISOString(), [selectedWeek]);
   const settledTotalForWeek = useMemo(() => {
-    if (!paymentHistory || paymentHistory.length === 0) return 0;
-    return paymentHistory
+    const hist = state.paymentHistory && state.paymentHistory.length ? state.paymentHistory : paymentHistory;
+    if (!hist || hist.length === 0) return 0;
+    return hist
       .filter((h: any) => h?.type === 'settlement' && h?.settlementWeek === weekStartISO)
       .reduce((sum: number, h: any) => sum + (h?.amount || 0), 0);
-  }, [paymentHistory, weekStartISO]);
+  }, [state.paymentHistory, paymentHistory, weekStartISO]);
 
   // New: helper to show applied deductions for previous (settled) weeks
   const getAppliedDeductionForDisplay = (s: WeeklySettlement) => {
-    const entry = paymentHistory.find(
+    const hist = state.paymentHistory && state.paymentHistory.length ? state.paymentHistory : paymentHistory;
+    const entry = hist?.find(
       (h: any) => h?.type === 'settlement' && h?.settlementWeek === weekStartISO && h?.employeeId === s.employeeId
     );
     if (entry && typeof entry.appliedDeduction === 'number') return Math.max(0, entry.appliedDeduction);
@@ -150,7 +190,6 @@ export default function SettlementsScreen() {
       const paid = Math.max(0, entry.amount || 0);
       const grossPaidPortion = Math.max(0, paid - priorPaySnap);
       const approx = Math.max(0, x - grossPaidPortion);
-      // Clamp to available advances for that week as a safety bound
       const priorAdvSnap = cfAdvByWeek?.[`${s.employeeId}|${weekStartISO}`] || 0;
       const availableAdvAtWeek = priorAdvSnap + s.totalAdvances;
       return Math.min(approx, Math.max(0, availableAdvAtWeek));
@@ -239,6 +278,18 @@ export default function SettlementsScreen() {
       StorageService.setSettledWeeks ? StorageService.setSettledWeeks(settledMap) : Promise.resolve(),
       StorageService.setCarryForwardAdvancesByWeek ? StorageService.setCarryForwardAdvancesByWeek(cfByWeek) : Promise.resolve(),
     ]);
+
+    // Push to cloud meta for sync
+    try {
+      if (state.user?.id) {
+        await MetaRepo.setState(state.user.id, {
+          cfAdvances: newCfAdv,
+          cfPayables: newCfPay,
+          settledWeeks: settledMap,
+          cfAdvByWeek: cfByWeek,
+        });
+      }
+    } catch {}
 
     setCfAdvances(newCfAdv);
     setCfPayables(newCfPay);
