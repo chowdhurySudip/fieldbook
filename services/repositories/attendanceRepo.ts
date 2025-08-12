@@ -1,19 +1,25 @@
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 import { AttendanceRecord } from '../../types';
 import { db } from '../firebase';
 import { fromFirestore, WithId } from './firestoreUtils';
 
 const COLLECTION = (uid: string) => collection(db, `users/${uid}/attendance`);
+const QUERY_LIMIT = 200; // Higher limit for attendance as it's frequently accessed
 
 export const AttendanceRepo = {
   async list(uid: string): Promise<WithId<AttendanceRecord>[]> {
-    const q = query(COLLECTION(uid), orderBy('updatedAt', 'desc'));
+    const q = query(COLLECTION(uid), orderBy('updatedAt', 'desc'), limit(QUERY_LIMIT));
     const snap = await getDocs(q);
     return snap.docs.map(d => fromFirestore<AttendanceRecord>(d));
   },
 
   async listSince(uid: string, since: Date): Promise<WithId<AttendanceRecord>[]> {
-    const q = query(COLLECTION(uid), where('updatedAt', '>', Timestamp.fromDate(since)), orderBy('updatedAt', 'desc'));
+    const q = query(
+      COLLECTION(uid), 
+      where('updatedAt', '>', Timestamp.fromDate(since)), 
+      orderBy('updatedAt', 'desc'),
+      limit(QUERY_LIMIT)
+    );
     const snap = await getDocs(q);
     return snap.docs.map(d => fromFirestore<AttendanceRecord>(d));
   },
