@@ -10,11 +10,10 @@ const dayKey = (d: Date | string) => {
 };
 const SETTLEMENT_ID = (employeeId: string, weekISO: string) => `settlement_${employeeId}_${weekISO}`;
 
-const docIdForPayment = (p: PaymentHistory): string | null => {
+export const paymentDocId = (p: PaymentHistory): string => {
   if (p.type === 'settlement' && p.employeeId && p.settlementWeek) return SETTLEMENT_ID(p.employeeId, p.settlementWeek);
   if (p.relatedAttendanceId) return `att_${p.relatedAttendanceId}_${p.type}`;
   if ((p as any).siteId && p.type === 'site-withdrawal') return `sitewd_${(p as any).siteId}_${dayKey(p.date)}`;
-  // Fallback deterministic-ish id to avoid duplicates
   return `p_${p.type}_${p.employeeId || 'na'}_${dayKey(p.date)}_${Math.round((p.amount || 0) * 100)}`;
 };
 
@@ -32,7 +31,7 @@ export const PaymentsRepo = {
   },
 
   async upsert(uid: string, payment: PaymentHistory): Promise<string> {
-    const id = docIdForPayment(payment);
+    const id = paymentDocId(payment);
     if (id) {
       const ref = doc(db, `users/${uid}/payments/${id}`);
       await setDoc(ref, { ...payment, updatedAt: serverTimestamp(), createdAt: payment.createdAt || serverTimestamp() }, { merge: true });
@@ -47,7 +46,6 @@ export const PaymentsRepo = {
   },
 
   async upsertSettlement(uid: string, payment: PaymentHistory): Promise<string> {
-    // Kept for backward compatibility; delegates to upsert
     return this.upsert(uid, payment);
   },
 
