@@ -4,7 +4,19 @@ import { db } from '../firebase';
 import { fromFirestore, WithId } from './firestoreUtils';
 
 const COLLECTION = (uid: string) => collection(db, `users/${uid}/payments`);
+const dayKey = (d: Date | string) => {
+  const dt = typeof d === 'string' ? new Date(d) : d;
+  return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()).toISOString().slice(0, 10);
+};
 const SETTLEMENT_ID = (employeeId: string, weekISO: string) => `settlement_${employeeId}_${weekISO}`;
+
+const docIdForPayment = (p: PaymentHistory): string | null => {
+  if (p.type === 'settlement' && p.employeeId && p.settlementWeek) return SETTLEMENT_ID(p.employeeId, p.settlementWeek);
+  if (p.relatedAttendanceId) return `att_${p.relatedAttendanceId}_${p.type}`;
+  if ((p as any).siteId && p.type === 'site-withdrawal') return `sitewd_${(p as any).siteId}_${dayKey(p.date)}`;
+  // Fallback deterministic-ish id to avoid duplicates
+  return `p_${p.type}_${p.employeeId || 'na'}_${dayKey(p.date)}_${Math.round((p.amount || 0) * 100)}`;
+};
 
 export const PaymentsRepo = {
   async list(uid: string): Promise<WithId<PaymentHistory>[]> {
@@ -19,9 +31,9 @@ export const PaymentsRepo = {
     return snap.docs.map(d => fromFirestore<PaymentHistory>(d));
   },
 
-  async upsertSettlement(uid: string, payment: PaymentHistory): Promise<string> {
-    if (payment.type === 'settlement' && payment.employeeId && payment.settlementWeek) {
-      const id = SETTLEMENT_ID(payment.employeeId, payment.settlementWeek);
+  async upsert(uid: string, payment: PaymentHistory): Promise<string> {
+    const id = docIdForPayment(payment);
+    if (id) {
       const ref = doc(db, `users/${uid}/payments/${id}`);
       await setDoc(ref, { ...payment, updatedAt: serverTimestamp(), createdAt: payment.createdAt || serverTimestamp() }, { merge: true });
       return id;
@@ -32,6 +44,11 @@ export const PaymentsRepo = {
       updatedAt: serverTimestamp(),
     });
     return ref.id;
+  },
+
+  async upsertSettlement(uid: string, payment: PaymentHistory): Promise<string> {
+    // Kept for backward compatibility; delegates to upsert
+    return this.upsert(uid, payment);
   },
 
   async add(uid: string, payment: Omit<PaymentHistory, 'id' | 'createdAt'> & { updatedAt?: any }): Promise<string> {

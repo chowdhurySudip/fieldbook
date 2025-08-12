@@ -1,4 +1,4 @@
-import { addDoc, collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 import { Site } from '../../types';
 import { db } from '../firebase';
 import { fromFirestore, WithId } from './firestoreUtils';
@@ -16,6 +16,13 @@ export const SitesRepo = {
     const q = query(COLLECTION(uid), where('updatedAt', '>', Timestamp.fromDate(since)), orderBy('updatedAt', 'desc'));
     const snap = await getDocs(q);
     return snap.docs.map(d => fromFirestore<Site>(d));
+  },
+
+  async get(uid: string, id: string): Promise<WithId<Site> | null> {
+    const ref = doc(db, `users/${uid}/sites/${id}`);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
+    return fromFirestore<Site>(snap as any);
   },
 
   async add(uid: string, site: Omit<Site, 'id' | 'createdAt' | 'updatedAt' | 'totalWithdrawn'>): Promise<string> {

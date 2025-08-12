@@ -1,4 +1,4 @@
-import { addDoc, collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 import { AttendanceRecord } from '../../types';
 import { db } from '../firebase';
 import { fromFirestore, WithId } from './firestoreUtils';
@@ -16,6 +16,13 @@ export const AttendanceRepo = {
     const q = query(COLLECTION(uid), where('updatedAt', '>', Timestamp.fromDate(since)), orderBy('updatedAt', 'desc'));
     const snap = await getDocs(q);
     return snap.docs.map(d => fromFirestore<AttendanceRecord>(d));
+  },
+
+  async get(uid: string, id: string): Promise<WithId<AttendanceRecord> | null> {
+    const ref = doc(db, `users/${uid}/attendance/${id}`);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
+    return fromFirestore<AttendanceRecord>(snap as any);
   },
 
   async add(uid: string, record: Omit<AttendanceRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {

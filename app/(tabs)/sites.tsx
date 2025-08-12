@@ -143,6 +143,13 @@ export default function SitesScreen() {
                     : 'Add your first construction site to get started'
                   }
                 </Text>
+                {!searchQuery && (
+                  <Button
+                    title="Add Site"
+                    onPress={() => router.push('../sites/add')}
+                    style={{ marginTop: 12 }}
+                  />
+                )}
               </View>
             ) : null
           }
