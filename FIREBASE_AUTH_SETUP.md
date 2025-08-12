@@ -2,13 +2,13 @@
 
 ## Current Status: ✅ Firestore Connected, ❌ Auth Setup Required
 
-Great news! Your **Firestore connection is working perfectly**. You just need to enable Anonymous Authentication in the Firebase Console.
+Great news! Your **Firestore connection is working perfectly**. You just need to enable Email/Password Authentication in the Firebase Console.
 
 ## 🚨 Quick Fix for Auth Error
 
 You're getting the error: `Firebase: Error (auth/admin-restricted-operation)`
 
-This means Anonymous Authentication is not enabled in your Firebase project.
+This means Email/Password Authentication is not enabled in your Firebase project.
 
 ### Step-by-Step Fix:
 
@@ -20,10 +20,10 @@ This means Anonymous Authentication is not enabled in your Firebase project.
    - In the left sidebar, click **"Authentication"**
    - If this is your first time, click **"Get started"**
 
-3. **Enable Anonymous Sign-in**
+3. **Enable Email/Password Sign-in**
    - Click on the **"Sign-in method"** tab
-   - Find **"Anonymous"** in the list of providers
-   - Click on **"Anonymous"**
+   - Find **"Email/Password"** in the list of providers
+   - Click on **"Email/Password"**
    - Toggle the **"Enable"** switch to ON
    - Click **"Save"**
 
@@ -55,8 +55,8 @@ service cloud.firestore {
 
 ## 📱 What This Enables
 
-Once Anonymous Authentication is enabled:
-- ✅ Users can sign in without creating accounts
+Once Email/Password Authentication is enabled:
+- ✅ Users can sign in with their email and password
 - ✅ Firestore security rules can authenticate users
 - ✅ Your app can sync data to the cloud
 - ✅ Offline/online data synchronization will work
@@ -66,7 +66,7 @@ Once Anonymous Authentication is enabled:
 ```
 🔥 Starting Firebase connection tests...
 📄 Firestore test: ✅ Firestore connection successful!
-🔐 Auth test: ✅ Auth connection successful! Anonymous user ID: [user-id]
+🔐 Auth test: ✅ Auth connection successful! User ID: [user-id]
 🎯 Overall result: ✅ All tests passed!
 ```
 

@@ -1,19 +1,21 @@
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { router } from 'expo-router';
 import React, { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Card, InputField } from '../../components';
 import { useApp } from '../../context/AppContext';
-import { formatDateForInput } from '../../utils/dates';
+import { formatDate } from '../../utils/dates';
 
 export default function AddSiteScreen() {
   const { actions } = useApp();
   const [formData, setFormData] = useState({
     name: '',
-    startDate: formatDateForInput(new Date()),
+    startDate: new Date(),
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   const [isLoading, setIsLoading] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   const validateForm = () => {
     const newErrors: {[key: string]: string} = {};
@@ -37,7 +39,7 @@ export default function AddSiteScreen() {
     try {
       await actions.addSite({
         name: formData.name.trim(),
-        startDate: new Date(formData.startDate),
+        startDate: formData.startDate,
         isActive: true,
         totalWithdrawn: 0
       });
@@ -49,6 +51,15 @@ export default function AddSiteScreen() {
       Alert.alert('Error', 'Failed to add construction site');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const onPickDate = (_: any, date?: Date) => {
+    if (Platform.OS !== 'ios') setShowDatePicker(false);
+    if (date) {
+      const d = new Date(date);
+      d.setHours(0, 0, 0, 0);
+      setFormData(prev => ({ ...prev, startDate: d }));
     }
   };
 
@@ -66,14 +77,19 @@ export default function AddSiteScreen() {
               required
             />
 
-            <InputField
-              label="Start Date"
-              value={formData.startDate}
-              onChangeText={(value) => setFormData(prev => ({ ...prev, startDate: value }))}
-              keyboardType="default"
-              error={errors.startDate}
-              required
-            />
+            <Text style={styles.label}>Start Date</Text>
+            <TouchableOpacity onPress={() => setShowDatePicker(true)} style={styles.dateInputLike} activeOpacity={0.7}>
+              <Text style={styles.dateText}>{formatDate(formData.startDate)}</Text>
+            </TouchableOpacity>
+            {!!errors.startDate && <Text style={styles.errorText}>{errors.startDate}</Text>}
+            {showDatePicker && (
+              <DateTimePicker
+                value={formData.startDate}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={onPickDate}
+              />
+            )}
           </Card>
 
           <Card title="Site Management Guidelines">
@@ -125,6 +141,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 16,
   },
+  label: { fontSize: 14, color: '#8E8E93', marginTop: 8, marginBottom: 6 },
+  dateInputLike: {
+    borderWidth: 1,
+    borderColor: '#C7C7CC',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  dateText: { color: '#1C1C1E', fontSize: 16 },
+  errorText: { color: '#FF3B30', fontSize: 12, marginTop: 4 },
   guidelineText: {
     fontSize: 14,
     color: '#8E8E93',

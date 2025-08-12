@@ -14,7 +14,17 @@ const STORAGE_KEYS = {
   CF_EXTRAS: 'fieldbook_cf_extras',
   SETTLED_WEEKS: 'fieldbook_settled_weeks',
   CF_ADV_BY_WEEK: 'fieldbook_cf_adv_by_week', // key: `${empId}|${weekStartISO}` => number (prev CF at start of week)
+  PENDING_QUEUE: 'fieldbook_pending_queue',
 } as const;
+
+export type PendingOp = {
+  op: 'add' | 'update' | 'set' | 'remove' | 'upsert';
+  collection: 'employees' | 'sites' | 'attendance' | 'payments' | 'meta';
+  id?: string;
+  data?: any;
+  // Optional timestamp of the local entity at the time the op was enqueued (for conflict checks)
+  lastKnownUpdatedAt?: string;
+};
 
 export class StorageService {
   // Namespace prefix for per-user isolation in local cache
@@ -303,6 +313,34 @@ export class StorageService {
       console.error('Error saving settled weeks:', error);
       throw error;
     }
+  }
+
+  // Pending queue (per-user)
+  static async getPendingQueue(): Promise<PendingOp[]> {
+    try {
+      const raw = await AsyncStorage.getItem(this.k(STORAGE_KEYS.PENDING_QUEUE));
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static async setPendingQueue(q: PendingOp[]): Promise<void> {
+    try {
+      await AsyncStorage.setItem(this.k(STORAGE_KEYS.PENDING_QUEUE), JSON.stringify(q));
+    } catch {}
+  }
+
+  static async enqueuePending(op: PendingOp): Promise<void> {
+    const q = await this.getPendingQueue();
+    q.push(op);
+    await this.setPendingQueue(q);
+  }
+
+  static async dequeueProcessed(predicate: (op: PendingOp) => boolean): Promise<void> {
+    const q = await this.getPendingQueue();
+    const remaining = q.filter(op => !predicate(op));
+    await this.setPendingQueue(remaining);
   }
 
   // Clear all data for the current namespace (does not remove global USER)

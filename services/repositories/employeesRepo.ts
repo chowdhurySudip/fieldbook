@@ -1,4 +1,4 @@
-import { addDoc, collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 import { Employee } from '../../types';
 import { db } from '../firebase';
 import { fromFirestore, WithId } from './firestoreUtils';
@@ -16,6 +16,13 @@ export const EmployeesRepo = {
     const q = query(COLLECTION(uid), where('updatedAt', '>', Timestamp.fromDate(since)), orderBy('updatedAt', 'desc'));
     const snap = await getDocs(q);
     return snap.docs.map(d => fromFirestore<Employee>(d));
+  },
+
+  async get(uid: string, id: string): Promise<WithId<Employee> | null> {
+    const ref = doc(db, `users/${uid}/employees/${id}`);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
+    return fromFirestore<Employee>(snap as any);
   },
 
   async add(uid: string, employee: Omit<Employee, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {

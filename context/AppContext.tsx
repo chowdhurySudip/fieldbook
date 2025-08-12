@@ -9,9 +9,66 @@ import { EmployeesRepo } from '../services/repositories/employeesRepo';
 import { MetaRepo } from '../services/repositories/metaRepo';
 import { PaymentsRepo } from '../services/repositories/paymentsRepo';
 import { SitesRepo } from '../services/repositories/sitesRepo';
-import { StorageService } from '../services/storage';
+import { PendingOp, StorageService } from '../services/storage';
 import { AppState, AttendanceRecord, Employee, PaymentHistory, Site, User } from '../types';
 import { generateId } from '../utils/calculations';
+
+// Helpers for payment merge and sync guards
+function paymentKey(p: PaymentHistory): string {
+  if (p.type === 'settlement' && p.employeeId && p.settlementWeek) {
+    return `settlement:${p.employeeId}:${p.settlementWeek}`;
+  }
+  if (p.relatedAttendanceId) {
+    return `attendance:${p.relatedAttendanceId}:${p.type}`;
+  }
+  if ((p as any).siteId && p.type === 'site-withdrawal') {
+    return `sitewd:${(p as any).siteId}:${new Date(p.date).toDateString()}`;
+  }
+  return `${p.type}:${p.employeeId || ''}:${new Date(p.date).toISOString()}:${p.amount}`;
+}
+
+// LWW comparator (prefer higher updatedAt, then createdAt)
+function isNewer(a: { updatedAt?: any; createdAt?: any }, b: { updatedAt?: any; createdAt?: any }) {
+  const au = a?.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+  const bu = b?.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+  if (au !== bu) return au > bu;
+  const ac = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+  const bc = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+  return ac >= bc;
+}
+
+function mergePayments(local: PaymentHistory[], remote: PaymentHistory[]): PaymentHistory[] {
+  const map = new Map<string, PaymentHistory>();
+  for (const p of local || []) {
+    const k = paymentKey(p);
+    const existing = map.get(k);
+    map.set(k, existing ? (isNewer(p, existing) ? p : existing) : p);
+  }
+  for (const p of remote || []) {
+    const k = paymentKey(p);
+    const existing = map.get(k);
+    map.set(k, existing ? (isNewer(p, existing) ? p : existing) : p);
+  }
+  return Array.from(map.values());
+}
+
+// Generic LWW merge for entity arrays by id
+function lwwMergeById<T extends { id: string; updatedAt?: any; createdAt?: any }>(local: T[], remote: T[]): T[] {
+  const map = new Map<string, T>();
+  for (const item of local || []) {
+    const existing = map.get(item.id);
+    map.set(item.id, existing ? (isNewer(item, existing) ? item : existing) : item);
+  }
+  for (const item of remote || []) {
+    const existing = map.get(item.id);
+    map.set(item.id, existing ? (isNewer(item, existing) ? item : existing) : item);
+  }
+  return Array.from(map.values());
+}
+
+let syncInFlight = false;
+let lastSyncRequestedAt = 0;
+const SYNC_DEBOUNCE_MS = 1500;
 
 // Action types
 type AppAction =
@@ -194,27 +251,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
       const uid = state.user?.id;
-      let employees: Employee[] = [];
-      let sites: Site[] = [];
+
+      // Always start from local cache
+      const [localEmployees, localSites] = await Promise.all([
+        StorageService.getEmployees(),
+        StorageService.getSites(),
+      ]);
+      let employees: Employee[] = localEmployees;
+      let sites: Site[] = localSites;
 
       if (uid) {
         try {
-          // Prefer remote fetch for fresh data, then cache locally
-          const remoteEmployees = await EmployeesRepo.list(uid);
-          employees = remoteEmployees.map(e => ({ ...e }));
-          await StorageService.saveEmployees(employees);
-
-          const remoteSites = await SitesRepo.list(uid);
-          sites = remoteSites.map(s => ({ ...s }));
-          await StorageService.saveSites(sites);
+          const [remoteEmployees, remoteSites] = await Promise.all([
+            EmployeesRepo.list(uid),
+            SitesRepo.list(uid),
+          ]);
+          employees = lwwMergeById(localEmployees as any, remoteEmployees as any) as any;
+          sites = lwwMergeById(localSites as any, remoteSites as any) as any;
+          await Promise.all([
+            StorageService.saveEmployees(employees),
+            StorageService.saveSites(sites),
+          ]);
         } catch (e) {
-          // Fallback to local cache if remote fails
-          employees = await StorageService.getEmployees();
-          sites = await StorageService.getSites();
+          // Keep local on failure
         }
-      } else {
-        employees = await StorageService.getEmployees();
-        sites = await StorageService.getSites();
       }
 
       // Always read local first
@@ -227,30 +287,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let att: AttendanceRecord[] = localAttendance;
       let payments: PaymentHistory[] = localPayments;
 
-      // Best-effort remote refresh with merge
+      // Best-effort remote refresh with LWW merge
       if (uid) {
         try {
           const [remoteAttendance, remotePayments] = await Promise.all([
             AttendanceRepo.list(uid),
             PaymentsRepo.list(uid),
           ]);
-          // Only update if there's new data or structure has changed
-          if (Array.isArray(remoteAttendance) && remoteAttendance.length >= localAttendance.length) {
-            await StorageService.saveAttendanceRecords(remoteAttendance as any);
-            att = remoteAttendance as any;
-          }
-          if (Array.isArray(remotePayments)) {
-            const merged = mergePayments(localPayments, remotePayments as any);
-            await StorageService.savePaymentHistory(merged as any);
-            payments = merged as any;
-          }
+          const mergedAtt = lwwMergeById(localAttendance as any, remoteAttendance as any) as any;
+          const mergedPay = mergePayments(localPayments as any, remotePayments as any) as any;
+          await Promise.all([
+            StorageService.saveAttendanceRecords(mergedAtt),
+            StorageService.savePaymentHistory(mergedPay),
+          ]);
+          att = mergedAtt;
+          payments = mergedPay;
         } catch {
           // ignore errors, rely on local data
         }
-      } else {
-        // No user, just load local data
-        att = localAttendance;
-        payments = localPayments;
       }
 
       // Only dispatch when changed to reduce re-renders
@@ -318,11 +372,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let id = generateId();
     try {
       if (uid) {
-        // Create remotely and use the remote id
         id = await EmployeesRepo.add(uid, employeeData);
+      } else {
+        await StorageService.enqueuePending({ op: 'add', collection: 'employees', data: { id, ...employeeData } });
       }
     } catch (e) {
-      // If remote fails, keep local id and continue
+      await StorageService.enqueuePending({ op: 'add', collection: 'employees', data: { id, ...employeeData } });
     }
 
     const employee: Employee = {
@@ -338,12 +393,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateEmployee = async (id: string, updates: Partial<Employee>): Promise<void> => {
     const uid = state.user?.id;
+    const prev = state.employees.find(e => e.id === id);
     try {
       if (uid) {
         await EmployeesRepo.update(uid, id, updates);
+      } else {
+        await StorageService.enqueuePending({ op: 'update', collection: 'employees', id, data: updates, lastKnownUpdatedAt: prev?.updatedAt ? new Date(prev.updatedAt).toISOString() : undefined });
       }
     } catch (e) {
-      // ignore and rely on local until sync
+      await StorageService.enqueuePending({ op: 'update', collection: 'employees', id, data: updates, lastKnownUpdatedAt: prev?.updatedAt ? new Date(prev.updatedAt).toISOString() : undefined });
     }
     await StorageService.updateEmployee(id, updates);
     dispatch({ type: 'UPDATE_EMPLOYEE', payload: { id, updates } });
@@ -370,8 +428,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       if (uid) {
         id = await SitesRepo.add(uid, siteData as any);
+      } else {
+        await StorageService.enqueuePending({ op: 'add', collection: 'sites', data: { id, ...siteData } });
       }
-    } catch (e) {}
+    } catch (e) {
+      await StorageService.enqueuePending({ op: 'add', collection: 'sites', data: { id, ...siteData } });
+    }
 
     const site: Site = {
       ...siteData,
@@ -387,11 +449,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateSite = async (id: string, updates: Partial<Site>): Promise<void> => {
     const uid = state.user?.id;
+    const prev = state.sites.find(s => s.id === id);
     try {
       if (uid) {
         await SitesRepo.update(uid, id, updates);
+      } else {
+        await StorageService.enqueuePending({ op: 'update', collection: 'sites', id, data: updates, lastKnownUpdatedAt: prev?.updatedAt ? new Date(prev.updatedAt).toISOString() : undefined });
       }
-    } catch (e) {}
+    } catch (e) {
+      await StorageService.enqueuePending({ op: 'update', collection: 'sites', id, data: updates, lastKnownUpdatedAt: prev?.updatedAt ? new Date(prev.updatedAt).toISOString() : undefined });
+    }
     await StorageService.updateSite(id, updates);
     dispatch({ type: 'UPDATE_SITE', payload: { id, updates } });
   };
@@ -402,8 +469,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       if (uid) {
         id = await AttendanceRepo.add(uid, recordData);
+      } else {
+        await StorageService.enqueuePending({ op: 'add', collection: 'attendance', data: { id, ...recordData } });
       }
-    } catch {}
+    } catch {
+      await StorageService.enqueuePending({ op: 'add', collection: 'attendance', data: { id, ...recordData } });
+    }
     const record: AttendanceRecord = {
       ...recordData,
       id,
@@ -416,9 +487,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateAttendanceRecord = async (id: string, updates: Partial<AttendanceRecord>): Promise<void> => {
     const uid = state.user?.id;
+    const prev = state.attendanceRecords.find(a => a.id === id);
     try {
       if (uid) {
         await AttendanceRepo.update(uid, id, updates);
+      } else {
+        await StorageService.enqueuePending({ op: 'update', collection: 'attendance', id, data: updates, lastKnownUpdatedAt: prev?.updatedAt ? new Date(prev.updatedAt).toISOString() : undefined });
       }
     } catch {}
     await StorageService.updateAttendanceRecord(id, updates);
@@ -427,49 +501,96 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addPaymentRecord = async (paymentData: Omit<PaymentHistory, 'id' | 'createdAt'>): Promise<void> => {
     const uid = state.user?.id;
-    let id = generateId();
+    const id = generateId();
+    const payment: PaymentHistory = { ...paymentData, id, createdAt: new Date() } as any;
     try {
       if (uid) {
-        id = await PaymentsRepo.add(uid, { ...paymentData });
+        await PaymentsRepo.upsert(uid, payment);
+      } else {
+        await StorageService.enqueuePending({ op: 'upsert', collection: 'payments', id, data: payment });
       }
-    } catch {}
-    const payment: PaymentHistory = {
-      ...paymentData,
-      id,
-      createdAt: new Date(),
-    };
+    } catch {
+      await StorageService.enqueuePending({ op: 'upsert', collection: 'payments', id, data: payment });
+    }
     await StorageService.addPaymentRecord(payment);
     dispatch({ type: 'ADD_PAYMENT_RECORD', payload: payment });
   };
 
-  // Build a stable key for payments to merge local and remote safely
-  function paymentKey(p: PaymentHistory): string {
-    if (p.type === 'settlement' && p.employeeId && p.settlementWeek) {
-      return `settlement:${p.employeeId}:${p.settlementWeek}`;
+  // Flush pending queue inside sync
+  const flushPending = async (uid: string) => {
+    const q = await StorageService.getPendingQueue();
+    if (!q.length) return;
+    const processed: PendingOp[] = [];
+    for (const op of q) {
+      try {
+        switch (op.collection) {
+          case 'employees': {
+            if (op.op === 'add') await EmployeesRepo.add(uid, op.data);
+            if (op.op === 'update' || op.op === 'set') {
+              const remote = op.id ? await EmployeesRepo.get(uid, op.id) : null;
+              const lastKnown = op.lastKnownUpdatedAt ? new Date(op.lastKnownUpdatedAt) : null;
+              if (remote?.updatedAt && lastKnown && remote.updatedAt > lastKnown) {
+                // Conflict: remote wins (skip stale local update)
+                break;
+              }
+              if (op.op === 'update') await EmployeesRepo.update(uid, op.id!, op.data);
+              else await EmployeesRepo.set(uid, op.id!, op.data);
+            }
+            if (op.op === 'remove') await EmployeesRepo.remove(uid, op.id!);
+            break;
+          }
+          case 'sites': {
+            if (op.op === 'add') await SitesRepo.add(uid, op.data);
+            if (op.op === 'update' || op.op === 'set') {
+              const remote = op.id ? await SitesRepo.get(uid, op.id) : null;
+              const lastKnown = op.lastKnownUpdatedAt ? new Date(op.lastKnownUpdatedAt) : null;
+              if (remote?.updatedAt && lastKnown && remote.updatedAt > lastKnown) {
+                break;
+              }
+              if (op.op === 'update') await SitesRepo.update(uid, op.id!, op.data);
+              else await SitesRepo.set(uid, op.id!, op.data);
+            }
+            if (op.op === 'remove') await SitesRepo.remove(uid, op.id!);
+            break;
+          }
+          case 'attendance': {
+            if (op.op === 'add') await AttendanceRepo.add(uid, op.data);
+            if (op.op === 'update' || op.op === 'set') {
+              const remote = op.id ? await AttendanceRepo.get(uid, op.id) : null;
+              const lastKnown = op.lastKnownUpdatedAt ? new Date(op.lastKnownUpdatedAt) : null;
+              if (remote?.updatedAt && lastKnown && remote.updatedAt > lastKnown) {
+                break;
+              }
+              if (op.op === 'update') await AttendanceRepo.update(uid, op.id!, op.data);
+              else await AttendanceRepo.set(uid, op.id!, op.data);
+            }
+            if (op.op === 'remove') await AttendanceRepo.remove(uid, op.id!);
+            break;
+          }
+          case 'payments': {
+            if (op.op === 'upsert') await PaymentsRepo.upsert(uid, op.data);
+            if (op.op === 'add') await PaymentsRepo.add(uid, op.data);
+            if (op.op === 'update') await PaymentsRepo.update(uid, op.id!, op.data);
+            if (op.op === 'set') await PaymentsRepo.set(uid, op.id!, op.data);
+            if (op.op === 'remove') await PaymentsRepo.remove(uid, op.id!);
+            break;
+          }
+          case 'meta': {
+            if (op.op === 'set') await MetaRepo.setState(uid, op.data);
+            break;
+          }
+        }
+        processed.push(op);
+      } catch {
+        // leave in queue for retry
+      }
     }
-    if (p.relatedAttendanceId) {
-      return `attendance:${p.relatedAttendanceId}:${p.type}`;
+    if (processed.length) {
+      await StorageService.dequeueProcessed((op) => processed.includes(op));
     }
-    if ((p as any).siteId && p.type === 'site-withdrawal') {
-      return `sitewd:${(p as any).siteId}:${new Date(p.date).toDateString()}`;
-    }
-    if ((p as any).id) return `id:${(p as any).id}`;
-    // Fallback weak key
-    return `${p.type}:${p.employeeId || ''}:${new Date(p.date).toISOString()}:${p.amount}`;
-  }
+  };
 
-  function mergePayments(local: PaymentHistory[], remote: PaymentHistory[]): PaymentHistory[] {
-    const map = new Map<string, PaymentHistory>();
-    for (const p of local || []) map.set(paymentKey(p), p);
-    for (const p of remote || []) map.set(paymentKey(p), p); // prefer remote on conflict
-    return Array.from(map.values());
-  }
-
-  let syncInFlight = false;
-  let lastSyncRequestedAt = 0;
-  const SYNC_DEBOUNCE_MS = 1500;
-
-  // Background sync
+  // Update syncNow to flush queue, then incremental pull
   const syncNow = async () => {
     if (!state.user) return;
     const nowTs = Date.now();
@@ -484,20 +605,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const uid = state.user.id;
 
-      // Push settlements/payments idempotently
+      // 0) Flush queue first (retry-safe)
+      await flushPending(uid);
+
+      // 1) Push settlements/payments idempotently from local cache
       try {
         const localPayments = await StorageService.getPaymentHistory();
         if (localPayments && localPayments.length) {
           for (const p of localPayments) {
-            try {
-              if (p.type === 'settlement') await PaymentsRepo.upsertSettlement(uid, p);
-              else await PaymentsRepo.add(uid, { ...p } as any);
-            } catch {}
+            try { await PaymentsRepo.upsert(uid, p as any); } catch {}
           }
         }
       } catch {}
 
-      // Push meta
+      // 2) Push meta
       try {
         const [cfAdv, cfPay, settled, cfByWeek] = await Promise.all([
           StorageService.getCarryForwardAdvances(),
@@ -505,15 +626,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           StorageService.getSettledWeeks(),
           StorageService.getCarryForwardAdvancesByWeek(),
         ]);
-        await MetaRepo.setState(uid, {
-          cfAdvances: cfAdv,
-          cfPayables: cfPay,
-          settledWeeks: settled,
-          cfAdvByWeek: cfByWeek,
-        });
+        await MetaRepo.setState(uid, { cfAdvances: cfAdv, cfPayables: cfPay, settledWeeks: settled, cfAdvByWeek: cfByWeek });
       } catch {}
 
-      // Pull incrementally
+      // 3) Pull incrementally and merge (LWW)
       try {
         const since = (await StorageService.getLastSyncTime()) || new Date(0);
         const [remoteEmployees, remoteSites, remoteAttendance, remotePayments] = await Promise.all([
@@ -524,28 +640,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ]);
 
         if (remoteEmployees?.length) {
-          const merged = [...(await StorageService.getEmployees()), ...(remoteEmployees as any)].reduce((acc: any[], item: any) => {
-            if (!acc.find(x => x.id === item.id)) acc.push(item); else acc = acc.map(x => x.id === item.id ? item : x);
-            return acc;
-          }, [] as any[]);
+          const merged = lwwMergeById(await StorageService.getEmployees() as any, remoteEmployees as any) as any;
           await StorageService.saveEmployees(merged as any);
           if (merged.length !== state.employees.length) dispatch({ type: 'SET_EMPLOYEES', payload: merged as any });
         }
 
         if (remoteSites?.length) {
-          const merged = [...(await StorageService.getSites()), ...(remoteSites as any)].reduce((acc: any[], item: any) => {
-            if (!acc.find(x => x.id === item.id)) acc.push(item); else acc = acc.map(x => x.id === item.id ? item : x);
-            return acc;
-          }, [] as any[]);
+          const merged = lwwMergeById(await StorageService.getSites() as any, remoteSites as any) as any;
           await StorageService.saveSites(merged as any);
           if (merged.length !== state.sites.length) dispatch({ type: 'SET_SITES', payload: merged as any });
         }
 
         if (remoteAttendance?.length) {
-          const merged = [...(await StorageService.getAttendanceRecords()), ...(remoteAttendance as any)].reduce((acc: any[], item: any) => {
-            if (!acc.find(x => x.id === item.id)) acc.push(item); else acc = acc.map(x => x.id === item.id ? item : x);
-            return acc;
-          }, [] as any[]);
+          const merged = lwwMergeById(await StorageService.getAttendanceRecords() as any, remoteAttendance as any) as any;
           await StorageService.saveAttendanceRecords(merged as any);
           if (merged.length !== state.attendanceRecords.length) dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: merged as any });
         }

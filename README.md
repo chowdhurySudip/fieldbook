@@ -43,16 +43,11 @@ npm install
 npx expo start
 ```
 
-### Demo Credentials
-- **Username:** contractor
-- **Password:** fieldbook2025
-
 ## Usage Guide
 
 ### 1. Initial Setup
-1. Launch the app and log in with demo credentials
-2. Click "Load Sample Data" to populate with example employees and sites
-3. Navigate through the tabs to explore features
+1. Launch the app and register or log in with your account
+2. Navigate through the tabs to explore features
 
 ### 2. Daily Workflow
 1. **Mark Attendance** - Record daily attendance with site assignments
@@ -196,6 +191,3 @@ This project is proprietary software designed for electrical contracting busines
 ## Support
 
 For technical support or feature requests, please contact the development team.
-
-## To Do
-1. Start Date on Add Site remains a text input; consider a date picker later for parity with other date flows.
