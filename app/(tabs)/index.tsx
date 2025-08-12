@@ -3,9 +3,8 @@ import { router } from 'expo-router';
 import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button, Card, StatCard } from '../../components';
+import { Card, StatCard } from '../../components';
 import { useApp } from '../../context/AppContext';
-import { StorageService } from '../../services/storage';
 import { formatCurrency, getCurrentSettlementWeek, getNextSettlementDate } from '../../utils/calculations';
 import { formatDate } from '../../utils/dates';
 
@@ -53,33 +52,6 @@ export default function DashboardScreen() {
     router.replace('../login');
   };
 
-  const handleResetData = async () => {
-    try {
-      // Clear local per-user namespaced data
-      await StorageService.clearAllData();
-      // Optionally, also clear remote data if user is signed in
-      const uid = state.user?.id;
-      if (uid) {
-        try {
-          // Best-effort remote wipe: delete docs in payments, attendance, employees, sites
-          // Note: This is a temporary dev-only helper; not optimized
-          const { db } = await import('../../services/firebase');
-          const { collection, getDocs, deleteDoc, doc } = await import('firebase/firestore');
-          const subcollections = ['payments', 'attendance', 'employees', 'sites'];
-          for (const sub of subcollections) {
-            const colRef = collection(db, `users/${uid}/${sub}`);
-            const snap = await getDocs(colRef);
-            for (const d of snap.docs) {
-              await deleteDoc(doc(db, `users/${uid}/${sub}/${d.id}`));
-            }
-          }
-        } catch {}
-      }
-      // Reload app state
-      await actions.loadData();
-    } catch (e) {}
-  };
-
   const renderSyncStatus = () => {
     const status = state.syncStatus || 'idle';
     const map: Record<string, { color: string; icon: any; label: string }> = {
@@ -117,11 +89,6 @@ export default function DashboardScreen() {
         </View>
 
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-          {/* Temporary Reset Data button (DEV ONLY) */}
-          <Card>
-            <Button title="Reset Data (Temp)" onPress={handleResetData} variant="secondary" />
-          </Card>
-
           {/* Next Settlement at top and clickable */}
           <TouchableOpacity onPress={() => router.push('./settlements')}>
             <Card title="Next Settlement">
