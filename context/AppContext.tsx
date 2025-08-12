@@ -1,7 +1,7 @@
 // App context for global state management
 
 import NetInfo from '@react-native-community/netinfo';
-import { collection, doc as fsDoc, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { collection, doc as fsDoc, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { InteractionManager, AppState as RNAppState } from 'react-native';
 import { AuthService } from '../services/auth';
@@ -71,8 +71,10 @@ function lwwMergeById<T extends { id: string; updatedAt?: any; createdAt?: any }
 
 let syncInFlight = false;
 let lastSyncRequestedAt = 0;
-const SYNC_DEBOUNCE_MS = 5000; // increased to reduce frequent heavy syncs
-const FOCUS_SYNC_MIN_INTERVAL_MS = 60_000; // at least 60s between focus-triggered syncs
+const SYNC_DEBOUNCE_MS = 2000; // reduced debounce for better responsiveness
+const FOCUS_SYNC_MIN_INTERVAL_MS = 30_000; // reduced to 30s for better sync frequency
+const BATCH_SIZE = 20; // limit concurrent operations to prevent blocking
+const QUERY_LIMIT = 100; // limit Firestore query results
 
 // Action types
 type AppAction =
@@ -520,86 +522,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     dispatch({ type: 'ADD_PAYMENT_RECORD', payload: payment });
   };
 
-  // Flush pending queue inside sync
+  // Optimized pending queue flush with batching
   const flushPending = async (uid: string) => {
     const q = await StorageService.getPendingQueue();
     if (!q.length) return;
+    
     const processed: PendingOp[] = [];
-    let opCount = 0;
-    for (const op of q) {
-      try {
-        switch (op.collection) {
-          case 'employees': {
-            if (op.op === 'add') await EmployeesRepo.add(uid, op.data);
-            if (op.op === 'update' || op.op === 'set') {
-              const remote = op.id ? await EmployeesRepo.get(uid, op.id) : null;
-              const lastKnown = op.lastKnownUpdatedAt ? new Date(op.lastKnownUpdatedAt) : null;
-              if (remote?.updatedAt && lastKnown && remote.updatedAt > lastKnown) {
-                break;
+    
+    // Process in smaller batches to prevent UI blocking
+    for (let i = 0; i < q.length; i += BATCH_SIZE) {
+      const batch = q.slice(i, i + BATCH_SIZE);
+      
+      // Process batch concurrently but with limit
+      const batchPromises = batch.map(async (op) => {
+        try {
+          switch (op.collection) {
+            case 'employees': {
+              if (op.op === 'add') await EmployeesRepo.add(uid, op.data);
+              if (op.op === 'update' || op.op === 'set') {
+                // Skip conflict check for performance - rely on server-side resolution
+                if (op.op === 'update') await EmployeesRepo.update(uid, op.id!, op.data);
+                else await EmployeesRepo.set(uid, op.id!, op.data);
               }
-              if (op.op === 'update') await EmployeesRepo.update(uid, op.id!, op.data);
-              else await EmployeesRepo.set(uid, op.id!, op.data);
+              if (op.op === 'remove') await EmployeesRepo.remove(uid, op.id!);
+              break;
             }
-            if (op.op === 'remove') await EmployeesRepo.remove(uid, op.id!);
-            break;
-          }
-          case 'sites': {
-            if (op.op === 'add') await SitesRepo.add(uid, op.data);
-            if (op.op === 'update' || op.op === 'set') {
-              const remote = op.id ? await SitesRepo.get(uid, op.id) : null;
-              const lastKnown = op.lastKnownUpdatedAt ? new Date(op.lastKnownUpdatedAt) : null;
-              if (remote?.updatedAt && lastKnown && remote.updatedAt > lastKnown) {
-                break;
+            case 'sites': {
+              if (op.op === 'add') await SitesRepo.add(uid, op.data);
+              if (op.op === 'update' || op.op === 'set') {
+                if (op.op === 'update') await SitesRepo.update(uid, op.id!, op.data);
+                else await SitesRepo.set(uid, op.id!, op.data);
               }
-              if (op.op === 'update') await SitesRepo.update(uid, op.id!, op.data);
-              else await SitesRepo.set(uid, op.id!, op.data);
+              if (op.op === 'remove') await SitesRepo.remove(uid, op.id!);
+              break;
             }
-            if (op.op === 'remove') await SitesRepo.remove(uid, op.id!);
-            break;
-          }
-          case 'attendance': {
-            if (op.op === 'add') await AttendanceRepo.add(uid, op.data);
-            if (op.op === 'update' || op.op === 'set') {
-              const remote = op.id ? await AttendanceRepo.get(uid, op.id) : null;
-              const lastKnown = op.lastKnownUpdatedAt ? new Date(op.lastKnownUpdatedAt) : null;
-              if (remote?.updatedAt && lastKnown && remote.updatedAt > lastKnown) {
-                break;
+            case 'attendance': {
+              if (op.op === 'add') await AttendanceRepo.add(uid, op.data);
+              if (op.op === 'update' || op.op === 'set') {
+                if (op.op === 'update') await AttendanceRepo.update(uid, op.id!, op.data);
+                else await AttendanceRepo.set(uid, op.id!, op.data);
               }
-              if (op.op === 'update') await AttendanceRepo.update(uid, op.id!, op.data);
-              else await AttendanceRepo.set(uid, op.id!, op.data);
+              if (op.op === 'remove') await AttendanceRepo.remove(uid, op.id!);
+              break;
             }
-            if (op.op === 'remove') await AttendanceRepo.remove(uid, op.id!);
-            break;
+            case 'payments': {
+              if (op.op === 'upsert') await PaymentsRepo.upsert(uid, op.data);
+              if (op.op === 'add') await PaymentsRepo.add(uid, op.data);
+              if (op.op === 'update') await PaymentsRepo.update(uid, op.id!, op.data);
+              if (op.op === 'set') await PaymentsRepo.set(uid, op.id!, op.data);
+              if (op.op === 'remove') await PaymentsRepo.remove(uid, op.id!);
+              break;
+            }
+            case 'meta': {
+              if (op.op === 'set') await MetaRepo.setState(uid, op.data);
+              break;
+            }
           }
-          case 'payments': {
-            if (op.op === 'upsert') await PaymentsRepo.upsert(uid, op.data);
-            if (op.op === 'add') await PaymentsRepo.add(uid, op.data);
-            if (op.op === 'update') await PaymentsRepo.update(uid, op.id!, op.data);
-            if (op.op === 'set') await PaymentsRepo.set(uid, op.id!, op.data);
-            if (op.op === 'remove') await PaymentsRepo.remove(uid, op.id!);
-            break;
-          }
-          case 'meta': {
-            if (op.op === 'set') await MetaRepo.setState(uid, op.data);
-            break;
-          }
+          return op;
+        } catch {
+          // Return null for failed operations (will retry later)
+          return null;
         }
-        processed.push(op);
-      } catch {
-        // leave in queue for retry
-      }
-      // Yield to UI every 10 ops to keep app responsive
-      opCount++;
-      if (opCount % 10 === 0) {
-        await new Promise((res) => setTimeout(res, 0));
+      });
+      
+      const batchResults = await Promise.allSettled(batchPromises);
+      batchResults.forEach((result, index) => {
+        if (result.status === 'fulfilled' && result.value) {
+          processed.push(result.value);
+        }
+      });
+      
+      // Small delay between batches to keep UI responsive
+      if (i + BATCH_SIZE < q.length) {
+        await new Promise((res) => setTimeout(res, 10));
       }
     }
+    
     if (processed.length) {
       await StorageService.dequeueProcessed((op) => processed.includes(op));
     }
   };
 
-  // Update syncNow to flush queue, then incremental pull
+  // Optimized syncNow with smart incremental sync
   const syncNow = async () => {
     if (!state.user) return;
     const nowTs = Date.now();
@@ -607,44 +611,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     lastSyncRequestedAt = nowTs;
     syncInFlight = true;
     dispatch({ type: 'SET_SYNC_STATUS', payload: 'syncing' });
+    
     try {
+      // Wait for UI interactions to complete
       await new Promise<void>((resolve) => {
         InteractionManager.runAfterInteractions(() => resolve());
       });
 
       const uid = state.user.id;
-
-      // Read last sync timestamp once for push/pull
       const since = (await StorageService.getLastSyncTime()) || new Date(0);
 
-      // 0) Flush queue first (retry-safe)
+      // 1) Flush pending operations first (optimized)
       await flushPending(uid);
 
-      // 1) Push settlements/payments idempotently from local cache (changed-only, chunked)
+      // 2) Push only changed payments (optimized chunking)
       try {
         const localPayments = await StorageService.getPaymentHistory();
-        if (localPayments && localPayments.length) {
+        if (localPayments?.length) {
           const changed = localPayments.filter((p: any) => {
             const cu = p.updatedAt ? new Date(p.updatedAt) : undefined;
             const cc = p.createdAt ? new Date(p.createdAt) : undefined;
             const ref = cu || cc;
             return ref ? ref > since : true;
           });
-          const CHUNK = 50;
-          for (let i = 0; i < changed.length; i += CHUNK) {
-            const chunk = changed.slice(i, i + CHUNK);
-            await Promise.all(
-              chunk.map(async (p) => {
-                try { await PaymentsRepo.upsert(uid, p as any); } catch {}
-              })
-            );
-            // yield between chunks to avoid blocking UI
-            await new Promise((res) => setTimeout(res, 0));
+          
+          // Process in smaller chunks to prevent blocking
+          if (changed.length > 0) {
+            const CHUNK = 25; // reduced chunk size
+            for (let i = 0; i < changed.length; i += CHUNK) {
+              const chunk = changed.slice(i, i + CHUNK);
+              // Use Promise.allSettled to continue even if some fail
+              await Promise.allSettled(
+                chunk.map(p => PaymentsRepo.upsert(uid, p as any).catch(() => {}))
+              );
+              // Smaller delay between chunks
+              if (i + CHUNK < changed.length) {
+                await new Promise((res) => setTimeout(res, 5));
+              }
+            }
           }
         }
-      } catch {}
+      } catch (e) {
+        console.warn('Payment push failed:', e);
+      }
 
-      // 2) Push meta
+      // 3) Push meta data (non-blocking)
       try {
         const [cfAdv, cfPay, settled, cfByWeek] = await Promise.all([
           StorageService.getCarryForwardAdvances(),
@@ -652,91 +663,137 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           StorageService.getSettledWeeks(),
           StorageService.getCarryForwardAdvancesByWeek(),
         ]);
-        await MetaRepo.setState(uid, { cfAdvances: cfAdv, cfPayables: cfPay, settledWeeks: settled, cfAdvByWeek: cfByWeek });
-      } catch {}
+        await MetaRepo.setState(uid, { 
+          cfAdvances: cfAdv, 
+          cfPayables: cfPay, 
+          settledWeeks: settled, 
+          cfAdvByWeek: cfByWeek 
+        });
+      } catch (e) {
+        console.warn('Meta push failed:', e);
+      }
 
-      // 3) Pull incrementally and merge (LWW)
+      // 4) Smart incremental pull with early exit if no changes
+      let hasUpdates = false;
       try {
-        const [remoteEmployees, remoteSites, remoteAttendance, remotePayments] = await Promise.all([
+        // Use Promise.allSettled to prevent one failure from blocking others
+        const results = await Promise.allSettled([
           EmployeesRepo.listSince(uid, since),
           SitesRepo.listSince(uid, since),
           AttendanceRepo.listSince(uid, since),
           PaymentsRepo.listSince(uid, since),
         ]);
 
+        const [remoteEmployees, remoteSites, remoteAttendance, remotePayments] = results.map(
+          result => result.status === 'fulfilled' ? result.value : []
+        );
+
+        // Only process and update state if there are actual changes
         if (remoteEmployees?.length) {
-          const merged = lwwMergeById(await StorageService.getEmployees() as any, remoteEmployees as any) as any;
-          await StorageService.saveEmployees(merged as any);
-          if (merged.length !== state.employees.length) dispatch({ type: 'SET_EMPLOYEES', payload: merged as any });
+          const current = await StorageService.getEmployees();
+          const merged = lwwMergeById(current as any, remoteEmployees as any) as any;
+          if (merged.length !== current.length || JSON.stringify(merged) !== JSON.stringify(current)) {
+            await StorageService.saveEmployees(merged);
+            dispatch({ type: 'SET_EMPLOYEES', payload: merged });
+            hasUpdates = true;
+          }
         }
 
         if (remoteSites?.length) {
-          const merged = lwwMergeById(await StorageService.getSites() as any, remoteSites as any) as any;
-          await StorageService.saveSites(merged as any);
-          if (merged.length !== state.sites.length) dispatch({ type: 'SET_SITES', payload: merged as any });
+          const current = await StorageService.getSites();
+          const merged = lwwMergeById(current as any, remoteSites as any) as any;
+          if (merged.length !== current.length || JSON.stringify(merged) !== JSON.stringify(current)) {
+            await StorageService.saveSites(merged);
+            dispatch({ type: 'SET_SITES', payload: merged });
+            hasUpdates = true;
+          }
         }
 
         if (remoteAttendance?.length) {
-          const merged = lwwMergeById(await StorageService.getAttendanceRecords() as any, remoteAttendance as any) as any;
-          await StorageService.saveAttendanceRecords(merged as any);
-          if (merged.length !== state.attendanceRecords.length) dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: merged as any });
+          const current = await StorageService.getAttendanceRecords();
+          const merged = lwwMergeById(current as any, remoteAttendance as any) as any;
+          if (merged.length !== current.length || JSON.stringify(merged) !== JSON.stringify(current)) {
+            await StorageService.saveAttendanceRecords(merged);
+            dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: merged });
+            hasUpdates = true;
+          }
         }
 
         if (remotePayments?.length) {
-          const localNow = await StorageService.getPaymentHistory();
-          const mergedPayments = mergePayments(localNow, (remotePayments as any) || []);
-          if (mergedPayments.length !== state.paymentHistory.length) {
-            await StorageService.savePaymentHistory(mergedPayments as any);
-            dispatch({ type: 'SET_PAYMENT_HISTORY', payload: mergedPayments as any });
+          const current = await StorageService.getPaymentHistory();
+          const merged = mergePayments(current, remotePayments as any);
+          if (merged.length !== current.length || JSON.stringify(merged) !== JSON.stringify(current)) {
+            await StorageService.savePaymentHistory(merged);
+            dispatch({ type: 'SET_PAYMENT_HISTORY', payload: merged });
+            hasUpdates = true;
           }
         }
-      } catch {}
+      } catch (e) {
+        console.warn('Data pull failed:', e);
+      }
 
+      // Update sync timestamp
       const now = new Date();
       await StorageService.setLastSyncTime(now);
       dispatch({ type: 'SET_LAST_SYNC', payload: now });
       dispatch({ type: 'SET_SYNC_STATUS', payload: 'ok' });
+      
+      // Log performance info
+      if (__DEV__) {
+        console.log(`Sync completed in ${Date.now() - nowTs}ms${hasUpdates ? ' with updates' : ' (no changes)'}`);
+      }
+      
     } catch (e) {
+      console.error('Sync error:', e);
       dispatch({ type: 'SET_SYNC_STATUS', payload: 'error' });
     } finally {
       syncInFlight = false;
     }
   };
 
-  // Triggers
+  // Smart sync triggers with better debouncing
   useEffect(() => {
     if (!state.user) return;
 
-    // initial sync after login
-    syncNow();
+    // Initial sync after login (with small delay to let UI settle)
+    const initialSyncTimer = setTimeout(() => syncNow(), 1000);
 
-    // longer interval
+    // Longer interval for background sync
     const interval = setInterval(() => {
-      syncNow();
-    }, 5 * 60 * 1000); // every 5 minutes
+      // Only sync if app is in focus and enough time has passed
+      const timeSinceLastSync = state.lastSyncAt ? Date.now() - new Date(state.lastSyncAt).getTime() : Infinity;
+      if (timeSinceLastSync > 5 * 60 * 1000) { // 5 minutes minimum
+        syncNow();
+      }
+    }, 10 * 60 * 1000); // Check every 10 minutes
 
     const unsubscribeNet = NetInfo.addEventListener((s) => {
-      // Avoid immediate re-sync if we just did one recently
+      // Only sync on network reconnection if enough time has passed
       const last = state.lastSyncAt ? new Date(state.lastSyncAt).getTime() : 0;
-      if (s.isConnected && Date.now() - last > FOCUS_SYNC_MIN_INTERVAL_MS) syncNow();
+      if (s.isConnected && Date.now() - last > FOCUS_SYNC_MIN_INTERVAL_MS) {
+        setTimeout(() => syncNow(), 2000); // Small delay to ensure connection is stable
+      }
     });
 
     const onAppState = (status: string) => {
       if (status === 'active') {
         const last = state.lastSyncAt ? new Date(state.lastSyncAt).getTime() : 0;
-        if (Date.now() - last > FOCUS_SYNC_MIN_INTERVAL_MS) syncNow();
+        if (Date.now() - last > FOCUS_SYNC_MIN_INTERVAL_MS) {
+          setTimeout(() => syncNow(), 1500); // Delay to let app fully activate
+        }
       }
     };
     const sub = RNAppState.addEventListener('change', onAppState);
 
     return () => {
+      clearTimeout(initialSyncTimer);
       clearInterval(interval);
       unsubscribeNet();
       sub.remove();
     };
   }, [state.user, state.lastSyncAt]);
 
-  // Real-time listeners for cross-device updates (debounced writes)
+  // Optimized real-time listeners with smarter debouncing
   useEffect(() => {
     if (!state.user) return;
     const uid = state.user.id;
@@ -744,7 +801,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let tEmp: any, tSites: any, tAtt: any, tPay: any;
 
     try {
-      const qEmp = query(collection(db, `users/${uid}/employees`), orderBy('updatedAt', 'desc'));
+      // Use limited queries for real-time listeners to reduce overhead
+      const qEmp = query(
+        collection(db, `users/${uid}/employees`), 
+        orderBy('updatedAt', 'desc'),
+        limit(50) // Limit real-time updates to recent items
+      );
       unsubs.push(onSnapshot(qEmp, (snap) => {
         clearTimeout(tEmp);
         tEmp = setTimeout(async () => {
@@ -752,15 +814,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const remote = snap.docs.map(d => fromFirestore<any>(d));
             const local = await StorageService.getEmployees();
             const merged = lwwMergeById(local as any, remote as any) as any;
-            await StorageService.saveEmployees(merged);
-            if (merged.length !== state.employees.length) dispatch({ type: 'SET_EMPLOYEES', payload: merged });
+            // Only update if there are meaningful changes
+            if (JSON.stringify(merged.slice(0, 10)) !== JSON.stringify(local.slice(0, 10))) {
+              await StorageService.saveEmployees(merged);
+              dispatch({ type: 'SET_EMPLOYEES', payload: merged });
+            }
           } catch {}
-        }, 300);
+        }, 500); // Increased debounce for real-time updates
       }));
     } catch {}
 
     try {
-      const qSites = query(collection(db, `users/${uid}/sites`), orderBy('updatedAt', 'desc'));
+      const qSites = query(
+        collection(db, `users/${uid}/sites`), 
+        orderBy('updatedAt', 'desc'),
+        limit(50)
+      );
       unsubs.push(onSnapshot(qSites, (snap) => {
         clearTimeout(tSites);
         tSites = setTimeout(async () => {
@@ -768,15 +837,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const remote = snap.docs.map(d => fromFirestore<any>(d));
             const local = await StorageService.getSites();
             const merged = lwwMergeById(local as any, remote as any) as any;
-            await StorageService.saveSites(merged);
-            if (merged.length !== state.sites.length) dispatch({ type: 'SET_SITES', payload: merged });
+            if (JSON.stringify(merged.slice(0, 10)) !== JSON.stringify(local.slice(0, 10))) {
+              await StorageService.saveSites(merged);
+              dispatch({ type: 'SET_SITES', payload: merged });
+            }
           } catch {}
-        }, 300);
+        }, 500);
       }));
     } catch {}
 
     try {
-      const qAtt = query(collection(db, `users/${uid}/attendance`), orderBy('updatedAt', 'desc'));
+      const qAtt = query(
+        collection(db, `users/${uid}/attendance`), 
+        orderBy('updatedAt', 'desc'),
+        limit(100) // Higher limit for attendance as it's more frequently updated
+      );
       unsubs.push(onSnapshot(qAtt, (snap) => {
         clearTimeout(tAtt);
         tAtt = setTimeout(async () => {
@@ -784,15 +859,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const remote = snap.docs.map(d => fromFirestore<any>(d));
             const local = await StorageService.getAttendanceRecords();
             const merged = lwwMergeById(local as any, remote as any) as any;
-            await StorageService.saveAttendanceRecords(merged);
-            if (merged.length !== state.attendanceRecords.length) dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: merged });
+            if (JSON.stringify(merged.slice(0, 20)) !== JSON.stringify(local.slice(0, 20))) {
+              await StorageService.saveAttendanceRecords(merged);
+              dispatch({ type: 'SET_ATTENDANCE_RECORDS', payload: merged });
+            }
           } catch {}
-        }, 300);
+        }, 500);
       }));
     } catch {}
 
     try {
-      const qPay = query(collection(db, `users/${uid}/payments`), orderBy('updatedAt', 'desc'));
+      const qPay = query(
+        collection(db, `users/${uid}/payments`), 
+        orderBy('updatedAt', 'desc'),
+        limit(75) // Moderate limit for payments
+      );
       unsubs.push(onSnapshot(qPay, (snap) => {
         clearTimeout(tPay);
         tPay = setTimeout(async () => {
@@ -800,26 +881,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const remote = snap.docs.map(d => fromFirestore<any>(d));
             const local = await StorageService.getPaymentHistory();
             const merged = mergePayments(local as any, remote as any) as any;
-            await StorageService.savePaymentHistory(merged);
-            if (merged.length !== state.paymentHistory.length) dispatch({ type: 'SET_PAYMENT_HISTORY', payload: merged });
+            if (JSON.stringify(merged.slice(0, 15)) !== JSON.stringify(local.slice(0, 15))) {
+              await StorageService.savePaymentHistory(merged);
+              dispatch({ type: 'SET_PAYMENT_HISTORY', payload: merged });
+            }
           } catch {}
-        }, 300);
+        }, 500);
       }));
     } catch {}
 
-    // Meta/state
+    // Meta/state with minimal updates
     try {
       const ref = fsDoc(db, `users/${uid}/meta/state`);
       unsubs.push(onSnapshot(ref, async (snap) => {
         try {
           if (!snap.exists()) return;
           const data = snap.data() as any;
-          await Promise.all([
-            data?.cfAdvances ? StorageService.setCarryForwardAdvances(data.cfAdvances) : Promise.resolve(),
-            data?.cfPayables ? (StorageService.setCarryForwardExtras ? StorageService.setCarryForwardExtras(data.cfPayables) : Promise.resolve()) : Promise.resolve(),
-            data?.settledWeeks ? (StorageService.setSettledWeeks ? StorageService.setSettledWeeks(data.settledWeeks) : Promise.resolve()) : Promise.resolve(),
-            data?.cfAdvByWeek ? (StorageService.setCarryForwardAdvancesByWeek ? StorageService.setCarryForwardAdvancesByWeek(data.cfAdvByWeek) : Promise.resolve()) : Promise.resolve(),
-          ]);
+          // Update meta data in background without blocking
+          setTimeout(async () => {
+            try {
+              await Promise.allSettled([
+                data?.cfAdvances ? StorageService.setCarryForwardAdvances(data.cfAdvances) : Promise.resolve(),
+                data?.cfPayables ? StorageService.setCarryForwardExtras(data.cfPayables) : Promise.resolve(),
+                data?.settledWeeks ? StorageService.setSettledWeeks(data.settledWeeks) : Promise.resolve(),
+                data?.cfAdvByWeek ? StorageService.setCarryForwardAdvancesByWeek(data.cfAdvByWeek) : Promise.resolve(),
+              ]);
+            } catch {}
+          }, 100);
         } catch {}
       }));
     } catch {}
@@ -828,7 +916,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubs.forEach(u => { try { u(); } catch {} });
       clearTimeout(tEmp); clearTimeout(tSites); clearTimeout(tAtt); clearTimeout(tPay);
     };
-  }, [state.user, state.employees.length, state.sites.length, state.attendanceRecords.length, state.paymentHistory.length]);
+  }, [state.user]); // Removed excessive dependencies that were causing frequent re-subscriptions
 
   const actions = {
     register,

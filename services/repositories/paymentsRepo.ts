@@ -1,9 +1,10 @@
-import { addDoc, collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 import { PaymentHistory } from '../../types';
 import { db } from '../firebase';
 import { fromFirestore, WithId } from './firestoreUtils';
 
 const COLLECTION = (uid: string) => collection(db, `users/${uid}/payments`);
+const QUERY_LIMIT = 150; // Moderate limit for payments
 const dayKey = (d: Date | string) => {
   const dt = typeof d === 'string' ? new Date(d) : d;
   return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()).toISOString().slice(0, 10);
@@ -19,13 +20,18 @@ export const paymentDocId = (p: PaymentHistory): string => {
 
 export const PaymentsRepo = {
   async list(uid: string): Promise<WithId<PaymentHistory>[]> {
-    const q = query(COLLECTION(uid), orderBy('updatedAt', 'desc'));
+    const q = query(COLLECTION(uid), orderBy('updatedAt', 'desc'), limit(QUERY_LIMIT));
     const snap = await getDocs(q);
     return snap.docs.map(d => fromFirestore<PaymentHistory>(d));
   },
 
   async listSince(uid: string, since: Date): Promise<WithId<PaymentHistory>[]> {
-    const q = query(COLLECTION(uid), where('updatedAt', '>', Timestamp.fromDate(since)), orderBy('updatedAt', 'desc'));
+    const q = query(
+      COLLECTION(uid), 
+      where('updatedAt', '>', Timestamp.fromDate(since)), 
+      orderBy('updatedAt', 'desc'),
+      limit(QUERY_LIMIT)
+    );
     const snap = await getDocs(q);
     return snap.docs.map(d => fromFirestore<PaymentHistory>(d));
   },

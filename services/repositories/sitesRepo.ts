@@ -1,19 +1,25 @@
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 import { Site } from '../../types';
 import { db } from '../firebase';
 import { fromFirestore, WithId } from './firestoreUtils';
 
 const COLLECTION = (uid: string) => collection(db, `users/${uid}/sites`);
+const QUERY_LIMIT = 100;
 
 export const SitesRepo = {
   async list(uid: string): Promise<WithId<Site>[]> {
-    const q = query(COLLECTION(uid), orderBy('updatedAt', 'desc'));
+    const q = query(COLLECTION(uid), orderBy('updatedAt', 'desc'), limit(QUERY_LIMIT));
     const snap = await getDocs(q);
     return snap.docs.map(d => fromFirestore<Site>(d));
   },
 
   async listSince(uid: string, since: Date): Promise<WithId<Site>[]> {
-    const q = query(COLLECTION(uid), where('updatedAt', '>', Timestamp.fromDate(since)), orderBy('updatedAt', 'desc'));
+    const q = query(
+      COLLECTION(uid), 
+      where('updatedAt', '>', Timestamp.fromDate(since)), 
+      orderBy('updatedAt', 'desc'),
+      limit(QUERY_LIMIT)
+    );
     const snap = await getDocs(q);
     return snap.docs.map(d => fromFirestore<Site>(d));
   },
