@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, InputField } from '../components';
@@ -9,6 +9,13 @@ export default function LoginScreen() {
   const { actions, state } = useApp();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
+  // If a persisted session is restored, navigate to tabs automatically
+  useEffect(() => {
+    if (state.user?.isAuthenticated) {
+      router.replace('/(tabs)');
+    }
+  }, [state.user]);
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
