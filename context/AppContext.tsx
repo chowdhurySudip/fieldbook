@@ -95,7 +95,8 @@ type AppAction =
   | { type: 'ADD_PAYMENT_RECORD'; payload: PaymentHistory }
   | { type: 'SET_OFFLINE_STATUS'; payload: boolean }
   | { type: 'SET_LAST_SYNC'; payload: Date | null }
-  | { type: 'SET_SYNC_STATUS'; payload: 'idle' | 'syncing' | 'ok' | 'error' };
+  | { type: 'SET_SYNC_STATUS'; payload: 'idle' | 'syncing' | 'ok' | 'error' }
+  | { type: 'SET_AUTH_READY'; payload: boolean };
 
 // Initial state
 const initialState: AppState = {
@@ -109,6 +110,7 @@ const initialState: AppState = {
   lastSyncAt: null,
   isOffline: false,
   syncStatus: 'idle',
+  isAuthReady: false,
 };
 
 // Reducer
@@ -196,6 +198,9 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     case 'SET_SYNC_STATUS':
       return { ...state, syncStatus: action.payload };
 
+    case 'SET_AUTH_READY':
+      return { ...state, isAuthReady: action.payload };
+
     default:
       return state;
   }
@@ -248,6 +253,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         try { StorageService.clearNamespace(); } catch {}
         dispatch({ type: 'SET_USER', payload: null });
       }
+      // Mark auth as initialized (avoid login flicker)
+      dispatch({ type: 'SET_AUTH_READY', payload: true });
     });
     return unsubscribe;
   }, []);
