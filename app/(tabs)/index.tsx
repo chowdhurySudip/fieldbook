@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Card, StatCard, SyncPerformanceMonitor } from '../../components';
+import { Card, StatCard } from '../../components';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency, getCurrentSettlementWeek, getNextSettlementDate } from '../../utils/calculations';
 import { formatDate } from '../../utils/dates';
@@ -71,7 +71,6 @@ export default function DashboardScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <SyncPerformanceMonitor />
       <View style={styles.container}>
         <View style={styles.header}>
           <View>
