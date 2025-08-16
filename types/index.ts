@@ -105,6 +105,9 @@ export interface AppState {
   error: string | null;
   lastSyncAt: Date | null;
   isOffline: boolean;
+  syncStatus?: 'idle' | 'syncing' | 'ok' | 'error';
+  // New: becomes true after the first Firebase auth state is resolved
+  isAuthReady?: boolean;
 }
 
 // Navigation types

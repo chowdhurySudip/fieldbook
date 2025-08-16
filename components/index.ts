@@ -3,4 +3,5 @@
 export { Button } from './Button';
 export { Card, StatCard } from './Card';
 export { InputField, NumberInput, SelectField } from './Input';
+// SyncPerformanceMonitor intentionally not exported
 

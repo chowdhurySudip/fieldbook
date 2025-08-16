@@ -3,18 +3,17 @@ import { router } from 'expo-router';
 import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button, Card, StatCard } from '../../components';
+import { Card, StatCard } from '../../components';
 import { useApp } from '../../context/AppContext';
-import { StorageService } from '../../services/storage';
 import { formatCurrency, getCurrentSettlementWeek, getNextSettlementDate } from '../../utils/calculations';
-import { formatDate, getToday } from '../../utils/dates';
-import { initializeSampleData } from '../../utils/sampleData';
+import { formatDate } from '../../utils/dates';
 
 export default function DashboardScreen() {
   const { state, actions } = useApp();
 
   const todayWorkedCount = useMemo(() => {
-    const today = getToday();
+    const today = new Date();
+    today.setHours(0,0,0,0);
     return state.attendanceRecords.filter(r => {
       const d = new Date(r.date);
       d.setHours(0,0,0,0);
@@ -37,7 +36,6 @@ export default function DashboardScreen() {
       return sum + record.calculatedWage + extraPayments - record.advancePayment;
     }, 0);
 
-    // If this cycle is settled, show the settled total instead of estimate
     const settledAmount = (state.paymentHistory || [])
       .filter(h => h.type === 'settlement' && h.settlementWeek === currentWeekISO)
       .reduce((sum, h) => sum + (h.amount || 0), 0);
@@ -54,17 +52,21 @@ export default function DashboardScreen() {
     router.replace('../login');
   };
 
-  const handleLoadSampleData = async () => {
-    if (state.employees.length === 0 && state.sites.length === 0) {
-      await initializeSampleData(actions);
-    }
-  };
-
-  const handleReloadSampleData = async () => {
-    await StorageService.clearDataButKeepUser();
-    await actions.loadData();
-    await initializeSampleData(actions);
-    await actions.loadData();
+  const renderSyncStatus = () => {
+    const status = state.syncStatus || 'idle';
+    const map: Record<string, { color: string; icon: any; label: string }> = {
+      idle: { color: '#8E8E93', icon: 'cloud-outline', label: 'Idle' },
+      syncing: { color: '#007AFF', icon: 'cloud-upload-outline', label: 'Syncing' },
+      ok: { color: '#34C759', icon: 'cloud-done-outline' as any, label: 'Synced' },
+      error: { color: '#FF3B30', icon: 'cloud-offline-outline' as any, label: 'Sync Error' },
+    };
+    const meta = map[status];
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Ionicons name={(meta.icon as any)} size={18} color={meta.color} />
+        <Text style={{ color: meta.color, fontWeight: '600', fontSize: 12 }}>{meta.label}</Text>
+      </View>
+    );
   };
 
   return (
@@ -75,9 +77,15 @@ export default function DashboardScreen() {
             <Text style={styles.greeting}>Good day!</Text>
             <Text style={styles.date}>{formatDate(new Date())}</Text>
           </View>
-          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-            <Ionicons name="log-out-outline" size={24} color="#FF3B30" />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            {renderSyncStatus()}
+            <TouchableOpacity onPress={() => actions.syncNow?.()} style={styles.logoutButton}>
+              <Ionicons name="refresh-outline" size={22} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+              <Ionicons name="log-out-outline" size={24} color="#FF3B30" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
@@ -137,38 +145,7 @@ export default function DashboardScreen() {
                 <Ionicons name="calculator" size={24} color="#5856D6" />
                 <Text style={styles.actionText}>Settlements</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={styles.actionButton}
-                onPress={() => router.push('../firebase-test')}
-              >
-                <Ionicons 
-                  name="cloud-outline" 
-                  size={24} 
-                  color="#FF3B30" 
-                />
-                <Text style={styles.actionText}>
-                  Firebase Test
-                </Text>
-              </TouchableOpacity>
             </View>
-            
-            {/* Sample Data Buttons */}
-            {state.employees.length === 0 && state.sites.length === 0 ? (
-              <Button
-                title="Load Sample Data"
-                onPress={handleLoadSampleData}
-                variant="secondary"
-                style={styles.sampleDataButton}
-              />
-            ) : (
-              <Button
-                title="Reload Sample Data (Override)"
-                onPress={handleReloadSampleData}
-                variant="secondary"
-                style={styles.sampleDataButton}
-              />
-            )}
           </Card>
         </ScrollView>
       </View>
@@ -254,8 +231,5 @@ const styles = StyleSheet.create({
   settlementSubtext: {
     fontSize: 14,
     color: '#8E8E93',
-  },
-  sampleDataButton: {
-    marginTop: 16,
   },
 });

@@ -31,7 +31,7 @@ export default function AttendanceEntryScreen() {
   const activeEmployees = useMemo(() => state.employees.filter(emp => emp.isActive), [state.employees]);
   const siteOptions = useMemo(() => (
     [
-      { label: 'No site assigned', value: '' },
+      // Removed 'No site assigned' option to enforce selection
       ...state.sites
         .filter(site => site.isActive)
         .map(site => ({ label: site.name, value: site.id }))
@@ -92,10 +92,15 @@ export default function AttendanceEntryScreen() {
       const startOfDay = new Date(selectedDate);
       startOfDay.setHours(0, 0, 0, 0);
 
-      // For each active employee, update existing record for the date or add new one
       for (const employee of activeEmployees) {
         const data = attendanceData[employee.id];
         if (!data) continue;
+
+        // If present, a site must be selected
+        if (data.isPresent && !data.siteId) {
+          Alert.alert('Missing site', `Please select a site for ${employee.name}.`);
+          return;
+        }
 
         const calculatedWage = calculateEmployeeWage(employee, data);
 

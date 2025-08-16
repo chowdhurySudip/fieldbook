@@ -1,26 +1,46 @@
 import { router } from 'expo-router';
-import React, { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, InputField } from '../components';
 import { useApp } from '../context/AppContext';
 
 export default function LoginScreen() {
   const { actions, state } = useApp();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
+  // If a persisted session is restored, navigate to tabs automatically
+  useEffect(() => {
+    if (state.user?.isAuthenticated) {
+      router.replace('/(tabs)');
+    }
+  }, [state.user]);
+
   const handleLogin = async () => {
-    if (!username.trim() || !password.trim()) {
-      Alert.alert('Error', 'Please enter both username and password');
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Error', 'Please enter email and password');
       return;
     }
 
-    const success = await actions.login(username.trim(), password);
+    const success = await actions.login(email.trim(), password);
     if (success) {
       router.replace('/(tabs)');
     } else {
-      Alert.alert('Login Failed', 'Invalid username or password');
+      Alert.alert('Login Failed', 'Invalid email or password');
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      Alert.alert('Forgot Password', 'Enter your email to receive a reset link.');
+      return;
+    }
+    const sent = await actions.resetPassword(email.trim());
+    if (sent) {
+      Alert.alert('Email sent', 'Check your inbox for a reset link.');
+    } else {
+      Alert.alert('Error', 'Could not send reset email.');
     }
   };
 
@@ -38,10 +58,11 @@ export default function LoginScreen() {
 
           <View style={styles.form}>
             <InputField
-              label="Username"
-              value={username}
-              onChangeText={setUsername}
-              placeholder="Enter your username"
+              label="Email"
+              value={email}
+              onChangeText={setEmail}
+              placeholder="you@example.com"
+              keyboardType="email-address"
               required
             />
             
@@ -61,10 +82,13 @@ export default function LoginScreen() {
               style={styles.loginButton}
             />
 
-            <View style={styles.demoCredentials}>
-              <Text style={styles.demoText}>Demo Credentials:</Text>
-              <Text style={styles.demoText}>Username: contractor</Text>
-              <Text style={styles.demoText}>Password: fieldbook2025</Text>
+            <View style={styles.footerLinks}>
+              <TouchableOpacity onPress={() => router.push('./register')}>
+                <Text style={styles.linkText}>Create account</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleForgotPassword}>
+                <Text style={styles.linkText}>Forgot password?</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -113,16 +137,13 @@ const styles = StyleSheet.create({
   loginButton: {
     marginTop: 24,
   },
-  demoCredentials: {
-    marginTop: 24,
-    padding: 16,
-    backgroundColor: '#F2F2F7',
-    borderRadius: 8,
-    alignItems: 'center',
+  footerLinks: {
+    marginTop: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
-  demoText: {
+  linkText: {
+    color: '#007AFF',
     fontSize: 14,
-    color: '#8E8E93',
-    marginBottom: 2,
   },
 });
