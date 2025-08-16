@@ -33,46 +33,72 @@ export default function SitesScreen() {
       .slice(0, 1)[0];
 
     return (
-      <Card style={styles.siteCard} key={site.id}>
-        <View style={styles.siteContent}>
-          <View style={styles.siteInfo}>
-            <View style={styles.siteHeader}>
-              <Text style={styles.siteName}>{site.name}</Text>
-              <View style={[
-                styles.statusBadge, 
-                { backgroundColor: site.isActive ? '#34C759' : '#8E8E93' }
-              ]}>
-                <Text style={styles.statusText}>
-                  {site.isActive ? 'Active' : 'Completed'}
+      <TouchableOpacity
+        key={site.id}
+        onPress={() => router.push({ pathname: '/sites/[siteId]' as any, params: { siteId: site.id } })}
+        activeOpacity={0.7}
+      >
+        <Card style={styles.siteCard}>
+          <View style={styles.siteContent}>
+            <View style={styles.siteInfo}>
+              <View style={styles.siteHeader}>
+                <Text style={styles.siteName}>{site.name}</Text>
+                <View style={styles.headerActions}>
+                  <View style={[
+                    styles.statusBadge, 
+                    { backgroundColor: site.isActive ? '#34C759' : '#8E8E93' }
+                  ]}>
+                    <Text style={styles.statusText}>
+                      {site.isActive ? 'Active' : 'Completed'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.editButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      router.push({ pathname: '/sites/edit' as any, params: { siteId: site.id } });
+                    }}
+                    accessibilityLabel={`Edit ${site.name}`}
+                  >
+                    <Ionicons name="create-outline" size={20} color="#007AFF" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              
+              <Text style={styles.siteDate}>
+                Started: {formatDate(new Date(site.startDate))}
+              </Text>
+              
+              <View style={styles.siteStats}>
+                <Text style={styles.statText}>
+                  Total Withdrawn: {formatCurrency(site.totalWithdrawn)}
+                </Text>
+                <Text style={styles.statText}>
+                  Workers Assigned: {employeeCount}
                 </Text>
               </View>
-            </View>
-            
-            <Text style={styles.siteDate}>
-              Started: {formatDate(new Date(site.startDate))}
-            </Text>
-            
-            <View style={styles.siteStats}>
-              <Text style={styles.statText}>
-                Total Withdrawn: {formatCurrency(site.totalWithdrawn)}
-              </Text>
-              <Text style={styles.statText}>
-                Workers Assigned: {employeeCount}
-              </Text>
-            </View>
 
-            {recentActivity && (
-              <Text style={styles.lastActivity}>
-                Last Activity: {formatDate(new Date(recentActivity.date))}
-              </Text>
-            )}
+              {recentActivity && (
+                <Text style={styles.lastActivity}>
+                  Last Activity: {formatDate(new Date(recentActivity.date))}
+                </Text>
+              )}
 
-            <View style={{ marginTop: 8 }}>
-              <Button title="Add Withdrawal" onPress={() => router.push({ pathname: '/sites/[siteId]' as any, params: { siteId: site.id } })} />
+              <View style={styles.quickActions}>
+                <Button 
+                  title="Add Withdrawal" 
+                  onPress={() => {
+                    // Navigate to site detail with withdrawal focus
+                    router.push({ pathname: '/sites/[siteId]' as any, params: { siteId: site.id } });
+                  }}
+                  style={styles.withdrawalButton}
+                />
+                <Text style={styles.tapHint}>Tap card for details</Text>
+              </View>
             </View>
           </View>
-        </View>
-      </Card>
+        </Card>
+      </TouchableOpacity>
     );
   };
 
@@ -227,6 +253,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   siteName: {
     fontSize: 18,
     fontWeight: '600',
@@ -237,7 +267,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
-    marginLeft: 12,
+    marginRight: 8,
+  },
+  editButton: {
+    padding: 4,
+    marginLeft: 4,
   },
   statusText: {
     fontSize: 12,
@@ -258,6 +292,21 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   lastActivity: {
+    fontSize: 12,
+    color: '#8E8E93',
+    fontStyle: 'italic',
+  },
+  quickActions: {
+    marginTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  withdrawalButton: {
+    flex: 1,
+    marginRight: 8,
+  },
+  tapHint: {
     fontSize: 12,
     color: '#8E8E93',
     fontStyle: 'italic',
