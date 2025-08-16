@@ -10,12 +10,24 @@ export default function RegisterScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   const handleRegister = async () => {
     if (!email.trim() || !password.trim()) {
       Alert.alert('Error', 'Please enter email and password');
       return;
     }
+    
+    if (password !== confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+    
+    if (password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters long');
+      return;
+    }
+    
     const ok = await actions.register(email.trim(), password, name.trim() || undefined);
     if (ok) {
       router.replace('/(tabs)');
@@ -59,11 +71,19 @@ export default function RegisterScreen() {
               secureTextEntry
               required
             />
+            <InputField
+              label="Confirm Password"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              placeholder="Confirm your password"
+              secureTextEntry
+              required
+            />
 
             <Button
               title={state.isLoading ? "Creating..." : "Create account"}
               onPress={handleRegister}
-              disabled={state.isLoading}
+              disabled={state.isLoading || !email.trim() || !password.trim() || !confirmPassword.trim()}
               style={styles.registerButton}
             />
 
