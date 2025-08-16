@@ -84,7 +84,7 @@ export default function SettlementDetailScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F2F2F7' },
   container: { flex: 1 },
-  contentContainer: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24 },
+  contentContainer: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24 },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16 },
   title: { fontSize: 20, fontWeight: '700', color: '#1C1C1E' },
   subTitle: { fontSize: 14, color: '#8E8E93', marginTop: 4 },

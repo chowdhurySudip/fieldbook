@@ -12,10 +12,10 @@ export const formatDate = (date: Date): string => {
 };
 
 /**
- * Format date for input fields
+ * Format date for input fields (local timezone)
  */
 export const formatDateForInput = (date: Date): string => {
-  return date.toISOString().split('T')[0];
+  return getLocalDateString(date);
 };
 
 /**
@@ -68,4 +68,14 @@ export const getWeekString = (date: Date): string => {
 export const parseDate = (dateString: string): Date => {
   const date = new Date(dateString);
   return isNaN(date.getTime()) ? new Date() : date;
+};
+
+/**
+ * Get date string in local timezone (YYYY-MM-DD) without timezone conversion
+ */
+export const getLocalDateString = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day = date.getDate().toString().padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
