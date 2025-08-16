@@ -96,7 +96,8 @@ type AppAction =
   | { type: 'SET_OFFLINE_STATUS'; payload: boolean }
   | { type: 'SET_LAST_SYNC'; payload: Date | null }
   | { type: 'SET_SYNC_STATUS'; payload: 'idle' | 'syncing' | 'ok' | 'error' }
-  | { type: 'SET_AUTH_READY'; payload: boolean };
+  | { type: 'SET_AUTH_READY'; payload: boolean }
+  | { type: 'RESET_DATA' };
 
 // Initial state
 const initialState: AppState = {
@@ -111,6 +112,7 @@ const initialState: AppState = {
   isOffline: false,
   syncStatus: 'idle',
   isAuthReady: false,
+  metaVersion: 0,
 };
 
 // Reducer
@@ -201,6 +203,18 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     case 'SET_AUTH_READY':
       return { ...state, isAuthReady: action.payload };
 
+    case 'RESET_DATA':
+      return {
+        ...state,
+        employees: [],
+        sites: [],
+        attendanceRecords: [],
+        paymentHistory: [],
+        lastSyncAt: null,
+        error: null,
+        metaVersion: (state.metaVersion || 0) + 1,
+      };
+
     default:
       return state;
   }
@@ -236,6 +250,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     const unsubscribe = AuthService.onAuthStateChanged(async (sessionUser) => {
       if (sessionUser) {
+        // If switching users, clear in-memory data first to avoid leaking previous account data
+        if (state.user?.id && state.user.id !== sessionUser.uid) {
+          dispatch({ type: 'RESET_DATA' });
+          // Only hard reset when switching between different users
+          try { await StorageService.hardResetForUser(sessionUser.uid); } catch {}
+        }
         try { StorageService.setNamespace(sessionUser.uid); } catch {}
         const user: User = {
           id: sessionUser.uid,
@@ -247,11 +267,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         try { await StorageService.saveUser(user); } catch {}
         // Clean-start policy: wipe legacy global (non-namespaced) data
         try { await StorageService.clearLegacyGlobalData(); } catch {}
+        // Only reset in-memory collections when switching users
+        if (state.user?.id && state.user.id !== sessionUser.uid) {
+          dispatch({ type: 'RESET_DATA' });
+        }
         // Load app data from namespaced cache
         loadData();
       } else {
         try { StorageService.clearNamespace(); } catch {}
         dispatch({ type: 'SET_USER', payload: null });
+        // Clear in-memory data on sign-out
+        dispatch({ type: 'RESET_DATA' });
       }
       // Mark auth as initialized (avoid login flicker)
       dispatch({ type: 'SET_AUTH_READY', payload: true });
@@ -378,6 +404,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logout = async (): Promise<void> => {
     await AuthService.logout();
     dispatch({ type: 'SET_USER', payload: null });
+    // Clear namespace and in-memory data on logout
+    try { StorageService.clearNamespace(); } catch {}
+    dispatch({ type: 'RESET_DATA' });
   };
 
   const addEmployee = async (employeeData: Omit<Employee, 'id' | 'createdAt' | 'updatedAt'>): Promise<void> => {
@@ -676,6 +705,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           settledWeeks: settled, 
           cfAdvByWeek: cfByWeek 
         });
+        // Inform UI meta changed
+        dispatch({ type: 'SET_LAST_SYNC', payload: new Date() });
       } catch (e) {
         console.warn('Meta push failed:', e);
       }
@@ -913,6 +944,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 data?.settledWeeks ? StorageService.setSettledWeeks(data.settledWeeks) : Promise.resolve(),
                 data?.cfAdvByWeek ? StorageService.setCarryForwardAdvancesByWeek(data.cfAdvByWeek) : Promise.resolve(),
               ]);
+              // Bump metaVersion to notify UI
+              dispatch({ type: 'SET_LAST_SYNC', payload: new Date() });
+              dispatch({ type: 'SET_SYNC_STATUS', payload: 'ok' });
             } catch {}
           }, 100);
         } catch {}

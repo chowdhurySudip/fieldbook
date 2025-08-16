@@ -37,6 +37,19 @@ export class StorageService {
     this.namespacePrefix = `${uid}::`;
   }
 
+  // Optional: clear all data for a previous namespace (used when switching accounts)
+  static async hardResetForUser(uid: string): Promise<void> {
+    try {
+      // Temporarily set namespace, clear all namespaced keys, then restore
+      const prev = this.namespacePrefix;
+      this.setNamespace(uid);
+      await this.clearAllData();
+      this.namespacePrefix = prev;
+    } catch (error) {
+      console.error('Error hard resetting user data:', error);
+    }
+  }
+
   /**
    * Clear the namespace (used on logout). Subsequent reads/writes will use global keys again.
    */

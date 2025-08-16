@@ -108,6 +108,8 @@ export interface AppState {
   syncStatus?: 'idle' | 'syncing' | 'ok' | 'error';
   // New: becomes true after the first Firebase auth state is resolved
   isAuthReady?: boolean;
+  // New: bump whenever meta (cfAdvances, settledWeeks, cfAdvByWeek) is updated
+  metaVersion?: number;
 }
 
 // Navigation types
