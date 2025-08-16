@@ -29,16 +29,30 @@ export default function EmployeesScreen() {
         duesTotals[empId] = cfAmount;
       }
       
-      // Add advances from unsettled attendance records
+      // Build settled keys from both flags and payment history for accuracy
       const settledWeeks = await StorageService.getSettledWeeks();
+      // Use global state history, and if it's not ready yet, fall back to local storage
+      let hist = state.paymentHistory || [];
+      if (!hist.length) {
+        try {
+          hist = await StorageService.getPaymentHistory();
+        } catch {}
+      }
+      const settledByHistory = new Set(
+        (hist || [])
+          .filter(h => h?.type === 'settlement' && !!h?.settlementWeek && !!h?.employeeId)
+          .map(h => `${h.employeeId}|${h.settlementWeek}`)
+      );
+
+      // Add advances from unsettled attendance records
       for (const record of state.attendanceRecords) {
         if (record.advancePayment > 0) {
           const recordDate = new Date(record.date);
           const weekStart = getWednesdayWeekStart(recordDate);
           const weekKey = `${record.employeeId}|${weekStart.toISOString()}`;
           
-          // Only include if this week hasn't been settled
-          if (!settledWeeks[weekKey]) {
+          // Only include if this week hasn't been settled (by flags or history)
+          if (!settledWeeks[weekKey] && !settledByHistory.has(weekKey)) {
             duesTotals[record.employeeId] = (duesTotals[record.employeeId] || 0) + record.advancePayment;
           }
         }
@@ -46,7 +60,7 @@ export default function EmployeesScreen() {
       
       setTotalDues(duesTotals);
     })();
-  }, [state.attendanceRecords]);
+  }, [state.attendanceRecords, state.paymentHistory, state.user, state.metaVersion]);
 
   // Helper function to get Wednesday week start
   const getWednesdayWeekStart = (date: Date): Date => {
@@ -106,11 +120,10 @@ export default function EmployeesScreen() {
           <Text style={styles.employeeWage}>
             Base Wage: {formatCurrency(employee.baseWageRate)}/day
           </Text>
-          {(totalDues[employee.id] || 0) > 0 && (
-            <Text style={{ fontSize: 14, color: '#FF3B30', fontWeight: '500' }}>
-              Total Dues: -{formatCurrency(totalDues[employee.id] || 0)}
-            </Text>
-          )}
+          {/* Always show Total Dues so users can see it even when 0 */}
+          <Text style={{ fontSize: 14, fontWeight: '500', color: (totalDues[employee.id] || 0) > 0 ? '#FF3B30' : '#8E8E93' }}>
+            Total Dues: -{formatCurrency(totalDues[employee.id] || 0)}
+          </Text>
           {employee.contactInfo && (
             <Text style={styles.employeeContact}>{employee.contactInfo}</Text>
           )}

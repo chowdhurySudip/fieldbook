@@ -140,11 +140,20 @@ export default function SettlementsScreen() {
   // When switching weeks, set edit mode based on whether all employees are already settled for that week
   useEffect(() => {
     const weekStartISO = selectedWeek.toISOString();
-    const allSettled = weeklySettlements.length > 0 && weeklySettlements.every(s => settledFlags[`${s.employeeId}|${weekStartISO}`]);
+    // existing flag-based check
+    const allSettledByFlags = weeklySettlements.length > 0 && weeklySettlements.every(s => settledFlags[`${s.employeeId}|${weekStartISO}`]);
+
+    // additional: verify via payment history to avoid stale flags
+    const hist = (state.paymentHistory && state.paymentHistory.length ? state.paymentHistory : paymentHistory) || [];
+    const allSettledByHistory = weeklySettlements.length > 0 && weeklySettlements.every(s =>
+      hist.some((h: any) => h?.type === 'settlement' && h?.settlementWeek === weekStartISO && h?.employeeId === s.employeeId)
+    );
+
+    const allSettled = allSettledByFlags || allSettledByHistory;
     setIsEditing(!allSettled);
     // Clear per-employee deduction overrides when week changes to avoid stale values
     setDeductMap({});
-  }, [selectedWeek, weeklySettlements, settledFlags]);
+  }, [selectedWeek, weeklySettlements, settledFlags, state.paymentHistory, paymentHistory]);
 
   // Helper to get current deduction value for an employee
   const getDeductionValue = (s: WeeklySettlement) => {
@@ -343,7 +352,8 @@ export default function SettlementsScreen() {
                 const hist = paymentHistory.find(
                   (h: any) => h?.type === 'settlement' && h?.settlementWeek === weekStartISO && h?.employeeId === settlement.employeeId
                 );
-                const displayAmt = !isEditing && isSettledEmp ? (hist?.amount ?? 0) : toPay;
+                const hasHistory = !!hist;
+                const displayAmt = (!isEditing && (isSettledEmp || hasHistory)) ? (hist?.amount ?? 0) : toPay;
                 return (
                   <Text style={[styles.netAmount, { color: displayAmt >= 0 ? '#34C759' : '#FF3B30' }]}>
                     {formatCurrency(displayAmt)}
