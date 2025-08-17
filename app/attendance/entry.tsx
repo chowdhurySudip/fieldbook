@@ -32,6 +32,7 @@ export default function AttendanceEntryScreen() {
   const [selectedDate, setSelectedDate] = useState(getToday());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [attendanceData, setAttendanceData] = useState<AttendanceDataMap>({});
+  const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
 
   // Build lookups
   const activeEmployees = useMemo(() => state.employees.filter(emp => emp.isActive), [state.employees]);
@@ -192,12 +193,28 @@ export default function AttendanceEntryScreen() {
 
   const renderEmployeeCard = (employee: any) => {
     const data = attendanceData[employee.id] || { isPresent: false, workSessions: [], advancePayment: 0, extraPayments: [] };
+    const isExpanded = expandedCards[employee.id] || false;
+    
+    const toggleCardExpansion = (employeeId: string) => {
+      setExpandedCards(prev => ({
+        ...prev,
+        [employeeId]: !prev[employeeId]
+      }));
+    };
     
     const updateEmployeeData = (employeeId: string, field: keyof EmployeeAttendanceData, value: any) => {
       setAttendanceData(prev => ({
         ...prev,
         [employeeId]: { ...prev[employeeId], [field]: value }
       }));
+      
+      // Auto-expand card when employee is marked as present
+      if (field === 'isPresent' && value === true && !expandedCards[employeeId]) {
+        setExpandedCards(prevExpanded => ({
+          ...prevExpanded,
+          [employeeId]: true
+        }));
+      }
     };
 
     const addWorkSession = (employeeId: string) => {
@@ -274,21 +291,56 @@ export default function AttendanceEntryScreen() {
     return (
       <Card key={employee.id} style={styles.employeeCard}>
         <View style={styles.employeeHeader}>
-          <Text style={styles.employeeName}>{employee.name}</Text>
-          <TouchableOpacity
-            style={[
-              styles.presentToggle,
-              { backgroundColor: data?.isPresent ? '#34C759' : '#8E8E93' }
-            ]}
-            onPress={() => updateEmployeeData(employee.id, 'isPresent', !data?.isPresent)}
-          >
-            <Text style={styles.presentToggleText}>
-              {data?.isPresent ? 'Present' : 'Absent'}
-            </Text>
-          </TouchableOpacity>
+          <View style={styles.employeeInfo}>
+            <Text style={styles.employeeName}>{employee.name}</Text>
+            {data?.isPresent && (
+              <View style={styles.employeeSubtextContainer}>
+                <Text style={styles.employeeSubtext}>
+                  {data.workSessions.length} session{data.workSessions.length !== 1 ? 's' : ''} • 
+                  {totalHours}h total • Net: {formatCurrency(netPay)}
+                </Text>
+                <View style={styles.statusIndicators}>
+                  {data.workSessions.length > 0 && (
+                    <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
+                  )}
+                  {(data.advancePayment || 0) > 0 && (
+                    <View style={[styles.statusDot, { backgroundColor: '#FF9500' }]} />
+                  )}
+                  {(data.extraPayments || []).length > 0 && (
+                    <View style={[styles.statusDot, { backgroundColor: '#007AFF' }]} />
+                  )}
+                </View>
+              </View>
+            )}
+          </View>
+          <View style={styles.headerControls}>
+            {data?.isPresent && (
+              <TouchableOpacity
+                style={styles.expandButton}
+                onPress={() => toggleCardExpansion(employee.id)}
+              >
+                <Ionicons 
+                  name={isExpanded ? 'chevron-up' : 'chevron-down'} 
+                  size={20} 
+                  color="#8E8E93" 
+                />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[
+                styles.presentToggle,
+                { backgroundColor: data?.isPresent ? '#34C759' : '#8E8E93' }
+              ]}
+              onPress={() => updateEmployeeData(employee.id, 'isPresent', !data?.isPresent)}
+            >
+              <Text style={styles.presentToggleText}>
+                {data?.isPresent ? 'Present' : 'Absent'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        {data?.isPresent && (
+        {data?.isPresent && isExpanded && (
           <View style={styles.attendanceDetails}>
             {/* Work Sessions */}
             <View style={styles.workSessionsSection}>
@@ -449,6 +501,42 @@ export default function AttendanceEntryScreen() {
             )}
           </Card>
 
+          {/* Summary Card for Present Employees */}
+          {activeEmployees.filter(emp => attendanceData[emp.id]?.isPresent).length > 0 && (
+            <Card style={styles.summaryCard}>
+              <View style={styles.summaryHeader}>
+                <Text style={styles.summaryTitle}>
+                  {activeEmployees.filter(emp => attendanceData[emp.id]?.isPresent).length} employees present
+                </Text>
+                <TouchableOpacity
+                  style={styles.toggleAllButton}
+                  onPress={() => {
+                    const allExpanded = activeEmployees
+                      .filter(emp => attendanceData[emp.id]?.isPresent)
+                      .every(emp => expandedCards[emp.id]);
+                    
+                    const newExpanded = { ...expandedCards };
+                    activeEmployees
+                      .filter(emp => attendanceData[emp.id]?.isPresent)
+                      .forEach(emp => {
+                        newExpanded[emp.id] = !allExpanded;
+                      });
+                    setExpandedCards(newExpanded);
+                  }}
+                >
+                  <Text style={styles.toggleAllText}>
+                    {activeEmployees
+                      .filter(emp => attendanceData[emp.id]?.isPresent)
+                      .every(emp => expandedCards[emp.id]) 
+                      ? 'Collapse All' 
+                      : 'Expand All'
+                    }
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </Card>
+          )}
+
           <View style={styles.employeesList}>
             {activeEmployees.map(renderEmployeeCard)}
           </View>
@@ -471,6 +559,31 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F2F2F7' },
   content: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
   dateCard: { marginBottom: 16 },
+  summaryCard: { 
+    marginBottom: 16,
+    backgroundColor: '#F8F9FA',
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  summaryTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1C1C1E',
+  },
+  toggleAllButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#007AFF',
+    borderRadius: 16,
+  },
+  toggleAllText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
   datePickerInput: {
     marginTop: 6,
     borderWidth: 1,
@@ -489,20 +602,51 @@ const styles = StyleSheet.create({
   employeeHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 16,
+  },
+  employeeInfo: {
+    flex: 1,
+    marginRight: 12,
   },
   employeeName: {
     fontSize: 18,
     fontWeight: '600',
     color: '#1C1C1E',
-    flex: 1,
+    marginBottom: 4,
+  },
+  employeeSubtext: {
+    fontSize: 14,
+    color: '#8E8E93',
+    lineHeight: 18,
+  },
+  employeeSubtextContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  statusIndicators: {
+    flexDirection: 'row',
+    marginLeft: 8,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginLeft: 4,
+  },
+  headerControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  expandButton: {
+    padding: 8,
+    marginRight: 8,
   },
   presentToggle: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    marginLeft: 12,
   },
   presentToggleText: {
     fontSize: 14,
