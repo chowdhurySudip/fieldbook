@@ -333,18 +333,19 @@ export default function SettlementsScreen() {
 
     return (
       <Card style={styles.settlementCard}>
-        <View style={styles.settlementContent}>
+        <TouchableOpacity 
+          style={styles.settlementContent}
+          onPress={() =>
+            router.push({
+              pathname: '/settlements/[employeeId]',
+              params: { employeeId: settlement.employeeId, weekStart: selectedWeek.toISOString() },
+            })
+          }
+          activeOpacity={0.7}
+        >
           <View style={styles.settlementInfo}>
             <View style={styles.settlementHeader}>
-              <Text
-                style={styles.employeeName}
-                onPress={() =>
-                  router.push({
-                    pathname: '/settlements/[employeeId]',
-                    params: { employeeId: settlement.employeeId, weekStart: selectedWeek.toISOString() },
-                  })
-                }
-              >
+              <Text style={styles.employeeName}>
                 {settlement.employeeName}
               </Text>
               {(() => {
@@ -406,7 +407,7 @@ export default function SettlementsScreen() {
               </Text>
             </View>
           </View>
-        </View>
+        </TouchableOpacity>
       </Card>
     );
   };

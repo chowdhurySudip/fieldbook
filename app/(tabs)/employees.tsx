@@ -103,8 +103,11 @@ export default function EmployeesScreen() {
 
   const renderEmployee: ListRenderItem<Employee> = ({ item: employee }) => (
     <Card style={styles.employeeCard}>
-      {/* Make card content non-clickable */}
-      <View style={styles.employeeContent}>
+      <TouchableOpacity 
+        style={styles.employeeContent}
+        onPress={() => router.push(`../employees/${employee.id}`)}
+        activeOpacity={0.7}
+      >
         <View style={styles.employeeInfo}>
           <View style={styles.employeeHeader}>
             <Text style={styles.employeeName}>{employee.name}</Text>
@@ -127,13 +130,30 @@ export default function EmployeesScreen() {
           {employee.contactInfo && (
             <Text style={styles.employeeContact}>{employee.contactInfo}</Text>
           )}
+          <Text style={styles.clickHint}>Tap to view work history</Text>
         </View>
+      </TouchableOpacity>
 
         <View style={styles.employeeActions}>
+          {/* History button */}
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={(e) => {
+              e.stopPropagation();
+              router.push(`../employees/${employee.id}`);
+            }}
+            accessibilityLabel={`View work history for ${employee.name}`}
+          >
+            <Ionicons name="time-outline" size={20} color="#5856D6" />
+          </TouchableOpacity>
+
           {/* Edit employee details button */}
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => router.push(`../employees/edit?employeeId=${employee.id}`)}
+            onPress={(e) => {
+              e.stopPropagation();
+              router.push(`../employees/edit?employeeId=${employee.id}`);
+            }}
             accessibilityLabel={`Edit details for ${employee.name}`}
           >
             <Ionicons name="create-outline" size={20} color="#007AFF" />
@@ -141,7 +161,10 @@ export default function EmployeesScreen() {
 
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => toggleEmployeeStatus(employee.id)}
+            onPress={(e) => {
+              e.stopPropagation();
+              toggleEmployeeStatus(employee.id);
+            }}
           >
             <Ionicons 
               name={employee.isActive ? "pause" : "play"} 
@@ -150,7 +173,6 @@ export default function EmployeesScreen() {
             />
           </TouchableOpacity>
         </View>
-      </View>
     </Card>
   );
 
@@ -303,6 +325,7 @@ const styles = StyleSheet.create({
   employeeContent: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
   },
   employeeInfo: {
     flex: 1,
@@ -339,6 +362,12 @@ const styles = StyleSheet.create({
   employeeContact: {
     fontSize: 14,
     color: '#8E8E93',
+  },
+  clickHint: {
+    fontSize: 12,
+    color: '#C7C7CC',
+    fontStyle: 'italic',
+    marginTop: 4,
   },
   employeeActions: {
     flexDirection: 'row',
