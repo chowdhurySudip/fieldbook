@@ -381,7 +381,7 @@ export default function SettlementsScreen() {
                 <Text style={[styles.detailValue, { color: '#FF3B30' }]}>-{formatCurrency(getPrevAdvanceForDisplay(settlement))}</Text>
               </View>
               <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Extras:</Text>
+                <Text style={styles.detailLabel}>Bike:</Text>
                 <Text style={[styles.detailValue, { color: '#34C759' }]}>+{formatCurrency(settlement.totalExtraPayments)}</Text>
               </View>
               <View style={styles.detailRow}>

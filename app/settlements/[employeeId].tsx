@@ -45,7 +45,7 @@ export default function SettlementDetailScreen() {
           <View style={styles.row}><Text style={styles.label}>Base Wage</Text><Text style={styles.value}>{formatCurrency(employee.baseWageRate)}/day</Text></View>
           <View style={styles.row}><Text style={styles.label}>Total Wages</Text><Text style={styles.value}>{formatCurrency(settlement.totalWagesEarned)}</Text></View>
           <View style={styles.row}><Text style={styles.label}>Advances</Text><Text style={[styles.value, { color: '#FF3B30' }]}>-{formatCurrency(settlement.totalAdvances)}</Text></View>
-          <View style={styles.row}><Text style={styles.label}>Extras</Text><Text style={[styles.value, { color: '#34C759' }]}>+{formatCurrency(settlement.totalExtraPayments)}</Text></View>
+          <View style={styles.row}><Text style={styles.label}>Bike</Text><Text style={[styles.value, { color: '#34C759' }]}>+{formatCurrency(settlement.totalExtraPayments)}</Text></View>
           <View style={[styles.row, styles.total]}><Text style={styles.totalLabel}>Net</Text><Text style={styles.totalValue}>{formatCurrency(settlement.netPaymentDue)}</Text></View>
         </Card>
 

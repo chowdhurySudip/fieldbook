@@ -219,10 +219,10 @@ export default function AttendanceEntryScreen() {
               prefix="₹"
             />
 
-            {/* Extra Payments */}
-            <View style={styles.extraPaymentsSection}>
+            {/* Bike */}
+            <View style={styles.bikePaymentSection}>
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Extra Payments</Text>
+                <Text style={styles.sectionTitle}>Bike</Text>
                 <TouchableOpacity
                   style={styles.addButton}
                   onPress={() => addExtraPayment(employee.id)}
@@ -269,7 +269,7 @@ export default function AttendanceEntryScreen() {
                 <Text style={styles.summaryValue}>{formatCurrency(calculatedWage)}</Text>
               </View>
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Extra Payments:</Text>
+                <Text style={styles.summaryLabel}>Bike:</Text>
                 <Text style={styles.summaryValue}>{formatCurrency(totalExtraPayments)}</Text>
               </View>
               <View style={styles.summaryRow}>
@@ -379,7 +379,7 @@ const styles = StyleSheet.create({
   fullWidth: {
     flex: 1,
   },
-  extraPaymentsSection: {
+  bikePaymentSection: {
     marginTop: 16,
   },
   sectionHeader: {
