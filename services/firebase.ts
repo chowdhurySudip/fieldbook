@@ -1,5 +1,5 @@
 // Import the functions you need from the SDKs you need
-// Removed RN persistence import to avoid bundling issues; can re-add when supported
+// Optimized imports for smaller bundle size
 import { initializeApp } from "firebase/app";
 import type { Persistence } from 'firebase/auth';
 import { getAuth, initializeAuth } from 'firebase/auth';

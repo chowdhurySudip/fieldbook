@@ -29,6 +29,7 @@ export default function SiteDetailScreen() {
   const [showPicker, setShowPicker] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [activeTab, setActiveTab] = useState<'details' | 'withdrawals' | 'work'>('details');
+  const [isWithdrawalFormExpanded, setIsWithdrawalFormExpanded] = useState(false);
 
   const withdrawals = useMemo(() => {
     return (state.paymentHistory || [])
@@ -191,24 +192,40 @@ export default function SiteDetailScreen() {
       case 'withdrawals':
         return (
           <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-            <Card title="Add New Withdrawal" style={{ marginBottom: 12 }}>
-              <View style={{ marginBottom: 8 }}>
-                <Text style={styles.inputLabel}>Date</Text>
-                <TouchableOpacity onPress={() => setShowPicker(true)} style={styles.dateInputLike} activeOpacity={0.7}>
-                  <Text style={styles.dateText}>{formatDate(selectedDate)}</Text>
-                </TouchableOpacity>
-              </View>
-              {showPicker && (
-                <DateTimePicker
-                  value={selectedDate}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                  onChange={onChangeDate}
+            <Card style={{ marginBottom: 12 }}>
+              <TouchableOpacity 
+                onPress={() => setIsWithdrawalFormExpanded(!isWithdrawalFormExpanded)}
+                style={styles.collapsibleHeader}
+              >
+                <Text style={styles.collapsibleTitle}>Add New Withdrawal</Text>
+                <Ionicons 
+                  name={isWithdrawalFormExpanded ? "chevron-up" : "chevron-down"} 
+                  size={20} 
+                  color="#007AFF" 
                 />
+              </TouchableOpacity>
+              
+              {isWithdrawalFormExpanded && (
+                <View style={styles.collapsibleContent}>
+                  <View style={{ marginBottom: 8 }}>
+                    <Text style={styles.inputLabel}>Date</Text>
+                    <TouchableOpacity onPress={() => setShowPicker(true)} style={styles.dateInputLike} activeOpacity={0.7}>
+                      <Text style={styles.dateText}>{formatDate(selectedDate)}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {showPicker && (
+                    <DateTimePicker
+                      value={selectedDate}
+                      mode="date"
+                      display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                      onChange={onChangeDate}
+                    />
+                  )}
+                  <InputField label="Amount" value={amount} onChangeText={setAmount} keyboardType="numeric" />
+                  <InputField label="Note (optional)" value={note} onChangeText={setNote} />
+                  <Button title="Save Withdrawal" onPress={addWithdrawal} />
+                </View>
               )}
-              <InputField label="Amount" value={amount} onChangeText={setAmount} keyboardType="numeric" />
-              <InputField label="Note (optional)" value={note} onChangeText={setNote} />
-              <Button title="Save Withdrawal" onPress={addWithdrawal} />
             </Card>
 
             <Card title="Withdrawal History">
@@ -514,4 +531,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dateText: { color: '#1C1C1E', fontSize: 16 },
+  // Collapsible styles
+  collapsibleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  collapsibleTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1C1C1E',
+  },
+  collapsibleContent: {
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5EA',
+  },
 });

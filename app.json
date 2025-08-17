@@ -8,6 +8,12 @@
     "scheme": "fieldbook",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "assetBundlePatterns": [
+      "assets/images/icon.png",
+      "assets/images/adaptive-icon.png",
+      "assets/images/favicon.png",
+      "assets/images/splash-icon.png"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.chowdhurysudip.fieldbook"
@@ -26,16 +32,7 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-      "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
-        }
-      ]
+      "expo-router"
     ],
     "experiments": {
       "typedRoutes": true
