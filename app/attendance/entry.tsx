@@ -11,10 +11,16 @@ import { calculateDailyWage, formatCurrency, generateId } from '../../utils/calc
 import { formatDate, getToday } from '../../utils/dates';
 
 // Define attendance data shape to avoid TSX generic parsing issues
-type EmployeeAttendanceData = {
-  isPresent: boolean;
+type WorkSession = {
+  id: string;
   siteId: string;
   workMultiplier: number;
+  hoursWorked: number;
+};
+
+type EmployeeAttendanceData = {
+  isPresent: boolean;
+  workSessions: WorkSession[];
   advancePayment: number;
   extraPayments: ExtraPayment[];
 };
@@ -51,20 +57,26 @@ export default function AttendanceEntryScreen() {
 
     const initial: AttendanceDataMap = {};
     for (const emp of activeEmployees) {
-      const existing = recordsForDay.find(r => r.employeeId === emp.id);
-      if (existing) {
+      const existing = recordsForDay.filter(r => r.employeeId === emp.id);
+      if (existing.length > 0) {
+        // Convert existing attendance records to work sessions
+        const workSessions: WorkSession[] = existing.map(record => ({
+          id: record.id,
+          siteId: record.siteId || '',
+          workMultiplier: record.workMultiplier ?? 1,
+          hoursWorked: record.hoursWorked ?? 8,
+        }));
+
         initial[emp.id] = {
-          isPresent: existing.isPresent,
-          siteId: existing.siteId || '',
-          workMultiplier: existing.workMultiplier ?? 1,
-          advancePayment: existing.advancePayment ?? 0,
-          extraPayments: existing.extraPayments || []
+          isPresent: existing.some(r => r.isPresent),
+          workSessions,
+          advancePayment: existing[0]?.advancePayment ?? 0,
+          extraPayments: existing[0]?.extraPayments || []
         };
       } else {
         initial[emp.id] = {
           isPresent: false,
-          siteId: '',
-          workMultiplier: 1,
+          workSessions: [],
           advancePayment: 0,
           extraPayments: []
         };
@@ -83,8 +95,13 @@ export default function AttendanceEntryScreen() {
   };
 
   const calculateEmployeeWage = (employee: any, data: EmployeeAttendanceData | undefined) => {
-    if (!data?.isPresent) return 0;
-    return calculateDailyWage(employee.baseWageRate, data.workMultiplier);
+    if (!data?.isPresent || !data.workSessions.length) return 0;
+    
+    return data.workSessions.reduce((total, session) => {
+      const sessionWage = calculateDailyWage(employee.baseWageRate, session.workMultiplier);
+      // Calculate proportional wage based on hours worked (assuming 8 hours = full day)
+      return total + (sessionWage * session.hoursWorked / 8);
+    }, 0);
   };
 
   const handleSaveAttendance = async () => {
@@ -96,37 +113,72 @@ export default function AttendanceEntryScreen() {
         const data = attendanceData[employee.id];
         if (!data) continue;
 
-        // If present, a site must be selected
-        if (data.isPresent && !data.siteId) {
-          Alert.alert('Missing site', `Please select a site for ${employee.name}.`);
+        // If present, at least one work session must exist
+        if (data.isPresent && data.workSessions.length === 0) {
+          Alert.alert('Missing work session', `Please add at least one work session for ${employee.name}.`);
           return;
+        }
+
+        // Validate that all work sessions have sites selected
+        for (const session of data.workSessions) {
+          if (!session.siteId) {
+            Alert.alert('Missing site', `Please select a site for all work sessions of ${employee.name}.`);
+            return;
+          }
         }
 
         const calculatedWage = calculateEmployeeWage(employee, data);
 
-        // Find existing record for this employee on the selected date
-        const existing = state.attendanceRecords.find(r => {
+        // Find existing records for this employee on this date
+        const existingRecords = state.attendanceRecords.filter(r => {
           const d = new Date(r.date);
           d.setHours(0, 0, 0, 0);
           return r.employeeId === employee.id && d.getTime() === startOfDay.getTime();
         });
 
-        const common = {
-          employeeId: employee.id,
-          siteId: data.siteId || null,
-          date: startOfDay,
-          isPresent: data.isPresent,
-          workMultiplier: data.workMultiplier,
-          hoursWorked: 8,
-          advancePayment: data.advancePayment,
-          extraPayments: (data.extraPayments || []).filter(p => p.description.trim() && p.amount > 0),
-          calculatedWage,
-        };
+        // Update existing records to mark them as deleted (or we'll recreate them)
+        // For now, we'll just create new records and let the old ones remain
+        // TODO: Add proper delete functionality to context
+        
+        for (const existingRecord of existingRecords) {
+          await actions.updateAttendanceRecord(existingRecord.id, { isPresent: false, calculatedWage: 0 });
+        }
 
-        if (existing) {
-          await actions.updateAttendanceRecord(existing.id, common);
-        } else {
-          await actions.addAttendanceRecord({ ...common });
+        // Create new records for each work session
+        if (data.isPresent && data.workSessions.length > 0) {
+          for (const session of data.workSessions) {
+            const sessionWage = calculateDailyWage(employee.baseWageRate, session.workMultiplier);
+            const proportionalWage = sessionWage * session.hoursWorked / 8;
+
+            const recordData = {
+              employeeId: employee.id,
+              siteId: session.siteId,
+              date: startOfDay,
+              isPresent: true,
+              workMultiplier: session.workMultiplier,
+              hoursWorked: session.hoursWorked,
+              advancePayment: data.workSessions.indexOf(session) === 0 ? data.advancePayment : 0, // Only add advance to first session
+              extraPayments: data.workSessions.indexOf(session) === 0 ? (data.extraPayments || []).filter(p => p.description.trim() && p.amount > 0) : [], // Only add extras to first session
+              calculatedWage: proportionalWage,
+            };
+
+            await actions.addAttendanceRecord(recordData);
+          }
+        } else if (!data.isPresent) {
+          // Create a single absent record
+          const recordData = {
+            employeeId: employee.id,
+            siteId: null,
+            date: startOfDay,
+            isPresent: false,
+            workMultiplier: 1,
+            hoursWorked: 0,
+            advancePayment: data.advancePayment,
+            extraPayments: (data.extraPayments || []).filter(p => p.description.trim() && p.amount > 0),
+            calculatedWage: 0,
+          };
+
+          await actions.addAttendanceRecord(recordData);
         }
       }
 
@@ -139,13 +191,53 @@ export default function AttendanceEntryScreen() {
   };
 
   const renderEmployeeCard = (employee: any) => {
-    const data = attendanceData[employee.id] || { isPresent: false, siteId: '', workMultiplier: 1, advancePayment: 0, extraPayments: [] };
+    const data = attendanceData[employee.id] || { isPresent: false, workSessions: [], advancePayment: 0, extraPayments: [] };
+    
     const updateEmployeeData = (employeeId: string, field: keyof EmployeeAttendanceData, value: any) => {
       setAttendanceData(prev => ({
         ...prev,
         [employeeId]: { ...prev[employeeId], [field]: value }
       }));
     };
+
+    const addWorkSession = (employeeId: string) => {
+      const newSession: WorkSession = {
+        id: generateId(),
+        siteId: '',
+        workMultiplier: 1,
+        hoursWorked: 4
+      };
+      setAttendanceData(prev => ({
+        ...prev,
+        [employeeId]: { 
+          ...prev[employeeId], 
+          workSessions: [...(prev[employeeId]?.workSessions || []), newSession] 
+        }
+      }));
+    };
+
+    const updateWorkSession = (employeeId: string, sessionId: string, field: keyof WorkSession, value: any) => {
+      setAttendanceData(prev => ({
+        ...prev,
+        [employeeId]: {
+          ...prev[employeeId],
+          workSessions: (prev[employeeId]?.workSessions || []).map(s => 
+            s.id === sessionId ? { ...s, [field]: value } : s
+          )
+        }
+      }));
+    };
+
+    const removeWorkSession = (employeeId: string, sessionId: string) => {
+      setAttendanceData(prev => ({
+        ...prev,
+        [employeeId]: {
+          ...prev[employeeId],
+          workSessions: (prev[employeeId]?.workSessions || []).filter(s => s.id !== sessionId)
+        }
+      }));
+    };
+
     const addExtraPayment = (employeeId: string) => {
       const newPayment: ExtraPayment = { id: generateId(), description: '', amount: 0, category: 'other' };
       setAttendanceData(prev => ({
@@ -153,6 +245,7 @@ export default function AttendanceEntryScreen() {
         [employeeId]: { ...prev[employeeId], extraPayments: [ ...(prev[employeeId]?.extraPayments || []), newPayment ] }
       }));
     };
+
     const updateExtraPayment = (employeeId: string, paymentId: string, field: keyof ExtraPayment, value: any) => {
       setAttendanceData(prev => ({
         ...prev,
@@ -162,6 +255,7 @@ export default function AttendanceEntryScreen() {
         }
       }));
     };
+
     const removeExtraPayment = (employeeId: string, paymentId: string) => {
       setAttendanceData(prev => ({
         ...prev,
@@ -174,6 +268,7 @@ export default function AttendanceEntryScreen() {
 
     const calculatedWage = calculateEmployeeWage(employee, data);
     const totalExtraPayments = (data.extraPayments || []).reduce((sum, p) => sum + p.amount, 0);
+    const totalHours = data.workSessions.reduce((sum, session) => sum + session.hoursWorked, 0);
     const netPay = calculatedWage + totalExtraPayments - (data.advancePayment || 0);
 
     return (
@@ -195,21 +290,66 @@ export default function AttendanceEntryScreen() {
 
         {data?.isPresent && (
           <View style={styles.attendanceDetails}>
-            <SelectField
-              label="Site Assignment"
-              options={siteOptions}
-              value={data.siteId}
-              onValueChange={(value) => updateEmployeeData(employee.id, 'siteId', value)}
-              placeholder="Select site..."
-            />
+            {/* Work Sessions */}
+            <View style={styles.workSessionsSection}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Work Sessions</Text>
+                <TouchableOpacity
+                  style={styles.addButton}
+                  onPress={() => addWorkSession(employee.id)}
+                >
+                  <Ionicons name="add" size={20} color="#007AFF" />
+                </TouchableOpacity>
+              </View>
 
-            <SelectField
-              label="Work Multiplier"
-              options={[{ label: '0.5x', value: '0.5' }, { label: '1.0x', value: '1' }, { label: '1.5x', value: '1.5' }, { label: '2.0x', value: '2' }]}
-              value={String(data.workMultiplier ?? '1')}
-              onValueChange={(value) => updateEmployeeData(employee.id, 'workMultiplier', parseFloat(value))}
-              placeholder="Select multiplier..."
-            />
+              {data.workSessions.map((session, index) => (
+                <View key={session.id} style={styles.workSessionCard}>
+                  <View style={styles.sessionHeader}>
+                    <Text style={styles.sessionTitle}>Session {index + 1}</Text>
+                    <TouchableOpacity
+                      style={styles.removeButton}
+                      onPress={() => removeWorkSession(employee.id, session.id)}
+                    >
+                      <Ionicons name="trash" size={18} color="#FF3B30" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <SelectField
+                    label="Site"
+                    options={siteOptions}
+                    value={session.siteId}
+                    onValueChange={(value) => updateWorkSession(employee.id, session.id, 'siteId', value)}
+                    placeholder="Select site..."
+                  />
+
+                  <View style={styles.sessionRow}>
+                    <View style={styles.halfWidth}>
+                      <SelectField
+                        label="Work Multiplier"
+                        options={[{ label: '0.5x', value: '0.5' }, { label: '1.0x', value: '1' }, { label: '1.5x', value: '1.5' }, { label: '2.0x', value: '2' }]}
+                        value={String(session.workMultiplier)}
+                        onValueChange={(value) => updateWorkSession(employee.id, session.id, 'workMultiplier', parseFloat(value))}
+                        placeholder="Select multiplier..."
+                      />
+                    </View>
+
+                    <View style={styles.halfWidth}>
+                      <NumberInput
+                        label="Hours Worked"
+                        value={session.hoursWorked.toString()}
+                        onChangeText={(value) => updateWorkSession(employee.id, session.id, 'hoursWorked', parseFloat(value) || 0)}
+                        min={0}
+                        max={12}
+                      />
+                    </View>
+                  </View>
+                </View>
+              ))}
+
+              {data.workSessions.length === 0 && (
+                <Text style={styles.noSessionsText}>No work sessions added. Tap + to add a session.</Text>
+              )}
+            </View>
 
             <NumberInput
               label="Advance Payment"
@@ -261,8 +401,8 @@ export default function AttendanceEntryScreen() {
             {/* Wage Summary */}
             <View style={styles.wageSummary}>
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Base Wage:</Text>
-                <Text style={styles.summaryValue}>{formatCurrency(employee.baseWageRate)}</Text>
+                <Text style={styles.summaryLabel}>Total Hours:</Text>
+                <Text style={styles.summaryValue}>{totalHours}h</Text>
               </View>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Calculated Wage:</Text>
@@ -395,6 +535,42 @@ const styles = StyleSheet.create({
   },
   addButton: {
     padding: 4,
+  },
+  workSessionsSection: {
+    marginTop: 16,
+  },
+  workSessionCard: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+  },
+  sessionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  sessionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1C1C1E',
+  },
+  sessionRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  halfWidth: {
+    flex: 1,
+  },
+  noSessionsText: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+    fontStyle: 'italic',
+    paddingVertical: 16,
   },
   extraPaymentRow: {
     flexDirection: 'row',

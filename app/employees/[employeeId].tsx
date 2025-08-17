@@ -16,6 +16,17 @@ interface WorkHistoryRecord {
   calculatedWage: number;
 }
 
+interface DailyWorkRecord {
+  date: Date;
+  totalWage: number;
+  sessions: {
+    siteName: string;
+    siteId: string;
+    wage: number;
+    multiplier: number;
+  }[];
+}
+
 export default function EmployeeHistoryScreen() {
   const { employeeId } = useLocalSearchParams<{ employeeId: string }>();
   const { state } = useApp();
@@ -49,36 +60,78 @@ export default function EmployeeHistoryScreen() {
     return records;
   }, [employee, state.attendanceRecords, state.sites, employeeId]);
 
-  // Get unique sites worked at
-  const uniqueSites = useMemo(() => {
-    const siteSet = new Set(workHistory.map(record => record.siteId));
-    return Array.from(siteSet).map(siteId => {
-      const site = state.sites.find(s => s.id === siteId);
-      const daysWorked = workHistory.filter(record => record.siteId === siteId).length;
-      return {
-        siteId,
-        siteName: site?.name || 'Unknown Site',
-        daysWorked,
-      };
-    }).sort((a, b) => b.daysWorked - a.daysWorked); // Sort by most days worked
-  }, [workHistory, state.sites]);
+  // Group work history by date for multi-location support
+  const dailyWorkHistory = useMemo(() => {
+    const grouped = workHistory.reduce((acc, record) => {
+      const dateKey = record.date.toISOString().split('T')[0];
+      if (!acc[dateKey]) {
+        acc[dateKey] = [];
+      }
+      acc[dateKey].push(record);
+      return acc;
+    }, {} as Record<string, WorkHistoryRecord[]>);
 
-  const renderWorkRecord = ({ item }: { item: WorkHistoryRecord }) => (
+    return Object.entries(grouped)
+      .map(([dateStr, records]) => ({
+        date: new Date(dateStr),
+        totalWage: records.reduce((sum, r) => sum + r.calculatedWage, 0),
+        sessions: records.map(r => ({
+          siteName: r.siteName,
+          siteId: r.siteId,
+          wage: r.calculatedWage,
+          multiplier: r.workMultiplier
+        }))
+      }))
+      .sort((a, b) => b.date.getTime() - a.date.getTime()); // Most recent first
+  }, [workHistory]);
+
+  // Get unique sites worked at (now based on sessions, not individual records)
+  const uniqueSites = useMemo(() => {
+    const siteData = new Map<string, { siteName: string; totalSessions: number }>();
+    
+    dailyWorkHistory.forEach(day => {
+      day.sessions.forEach(session => {
+        const existing = siteData.get(session.siteId) || { 
+          siteName: session.siteName, 
+          totalSessions: 0 
+        };
+        siteData.set(session.siteId, {
+          siteName: session.siteName,
+          totalSessions: existing.totalSessions + 1
+        });
+      });
+    });
+
+    return Array.from(siteData.entries()).map(([siteId, data]) => ({
+      siteId,
+      siteName: data.siteName,
+      sessionsWorked: data.totalSessions,
+    })).sort((a, b) => b.sessionsWorked - a.sessionsWorked); // Sort by most sessions worked
+  }, [dailyWorkHistory]);
+
+  const renderDailyWorkRecord = ({ item }: { item: DailyWorkRecord }) => (
     <Card style={styles.recordCard}>
       <View style={styles.recordHeader}>
-        <View style={styles.recordDateSite}>
-          <Text style={styles.recordDate}>{formatDate(item.date)}</Text>
-          <Text style={styles.recordSite}>{item.siteName}</Text>
-        </View>
-        <Text style={styles.recordTotal}>{formatCurrency(item.calculatedWage)}</Text>
+        <Text style={styles.recordDate}>{formatDate(item.date)}</Text>
+        <Text style={styles.recordTotal}>{formatCurrency(item.totalWage)}</Text>
       </View>
       
-      <View style={styles.recordDetails}>
-        <View style={styles.wageCalculation}>
-          <Text style={styles.calculationText}>
-            Base: {formatCurrency(item.baseWage)} × {item.workMultiplier}x = {formatCurrency(item.calculatedWage)}
-          </Text>
-        </View>
+      {/* Table Header */}
+      <View style={styles.tableHeader}>
+        <Text style={[styles.tableHeaderText, styles.workplaceColumn]}>Workplace</Text>
+        <Text style={[styles.tableHeaderText, styles.multiplierColumn]}>Multiplier</Text>
+        <Text style={[styles.tableHeaderText, styles.wageColumn]}>Daily Wage</Text>
+      </View>
+      
+      {/* Table Rows */}
+      <View style={styles.tableBody}>
+        {item.sessions.map((session, index) => (
+          <View key={`${session.siteId}-${index}`} style={styles.tableRow}>
+            <Text style={[styles.tableCellText, styles.workplaceColumn]}>{session.siteName}</Text>
+            <Text style={[styles.tableCellText, styles.multiplierColumn]}>{session.multiplier}x</Text>
+            <Text style={[styles.tableCellText, styles.wageColumn]}>{formatCurrency(session.wage)}</Text>
+          </View>
+        ))}
       </View>
     </Card>
   );
@@ -109,7 +162,7 @@ export default function EmployeeHistoryScreen() {
 
         {/* Work Locations */}
         {uniqueSites.length > 0 && (
-          <Card title={`Work Locations (${workHistory.length} total days)`} style={styles.locationsCard}>
+          <Card title={`Work Locations (${dailyWorkHistory.length} total days)`} style={styles.locationsCard}>
             {uniqueSites.map((location, index) => (
               <View key={location.siteId} style={[
                 styles.locationRow,
@@ -117,7 +170,7 @@ export default function EmployeeHistoryScreen() {
               ]}>
                 <Text style={styles.locationName}>{location.siteName}</Text>
                 <Text style={styles.locationDays}>
-                  {location.daysWorked} day{location.daysWorked !== 1 ? 's' : ''}
+                  {location.sessionsWorked} session{location.sessionsWorked !== 1 ? 's' : ''}
                 </Text>
               </View>
             ))}
@@ -127,18 +180,18 @@ export default function EmployeeHistoryScreen() {
         {/* Work History List */}
         <View style={styles.historySection}>
           <Text style={styles.historyTitle}>
-            Work History ({workHistory.length} days)
+            Work History ({dailyWorkHistory.length} days)
           </Text>
           
-          {workHistory.length === 0 ? (
+          {dailyWorkHistory.length === 0 ? (
             <Card>
               <Text style={styles.emptyText}>No work history found for this employee</Text>
             </Card>
           ) : (
             <FlatList
-              data={workHistory}
-              renderItem={renderWorkRecord}
-              keyExtractor={(item) => `${item.date.toISOString()}-${item.siteId}`}
+              data={dailyWorkHistory}
+              renderItem={renderDailyWorkRecord}
+              keyExtractor={(item) => item.date.toISOString()}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.listContainer}
             />
@@ -189,15 +242,68 @@ const styles = StyleSheet.create({
   recordHeader: { 
     flexDirection: 'row', 
     justifyContent: 'space-between', 
-    alignItems: 'flex-start',
-    marginBottom: 8,
+    alignItems: 'center',
+    marginBottom: 12,
   },
   recordDateSite: { flex: 1 },
   recordDate: { fontSize: 16, fontWeight: '600', color: '#1C1C1E' },
   recordSite: { fontSize: 14, color: '#8E8E93', marginTop: 2 },
   recordTotal: { fontSize: 18, fontWeight: '700', color: '#007AFF' },
   
+  // Table Styles
+  tableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#F2F2F7',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 4,
+    marginBottom: 4,
+  },
+  tableBody: {
+    // Container for table rows
+  },
+  tableRow: {
+    flexDirection: 'row',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2F2F7',
+  },
+  tableHeaderText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6D6D80',
+    textAlign: 'center',
+  },
+  tableCellText: {
+    fontSize: 14,
+    color: '#1C1C1E',
+    textAlign: 'center',
+  },
+  
+  // Column Widths
+  workplaceColumn: {
+    flex: 2,
+    textAlign: 'left',
+  },
+  multiplierColumn: {
+    flex: 1,
+  },
+  wageColumn: {
+    flex: 1.5,
+    textAlign: 'right',
+  },
+  
   recordDetails: { },
+  sessionRow: { 
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2F2F7',
+    marginBottom: 4,
+  },
+  sessionInfo: { flex: 1 },
+  sessionSite: { fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
+  sessionDetails: { fontSize: 12, color: '#8E8E93', marginTop: 2 },
   wageCalculation: { marginBottom: 8 },
   calculationText: { fontSize: 14, color: '#8E8E93' },
 });
