@@ -15,7 +15,6 @@ type WorkSession = {
   id: string;
   siteId: string;
   workMultiplier: number;
-  hoursWorked: number;
 };
 
 type EmployeeAttendanceData = {
@@ -65,7 +64,6 @@ export default function AttendanceEntryScreen() {
           id: record.id,
           siteId: record.siteId || '',
           workMultiplier: record.workMultiplier ?? 1,
-          hoursWorked: record.hoursWorked ?? 8,
         }));
 
         initial[emp.id] = {
@@ -100,8 +98,8 @@ export default function AttendanceEntryScreen() {
     
     return data.workSessions.reduce((total, session) => {
       const sessionWage = calculateDailyWage(employee.baseWageRate, session.workMultiplier);
-      // Calculate proportional wage based on hours worked (assuming 8 hours = full day)
-      return total + (sessionWage * session.hoursWorked / 8);
+      // Each session contributes its multiplier-based wage directly
+      return total + sessionWage;
     }, 0);
   };
 
@@ -114,16 +112,16 @@ export default function AttendanceEntryScreen() {
         const data = attendanceData[employee.id];
         if (!data) continue;
 
-        // If present, at least one work session must exist
+        // If present, at least one work location must exist
         if (data.isPresent && data.workSessions.length === 0) {
-          Alert.alert('Missing work session', `Please add at least one work session for ${employee.name}.`);
+          Alert.alert('Missing work location', `Please add at least one work location for ${employee.name}.`);
           return;
         }
 
-        // Validate that all work sessions have sites selected
+        // Validate that all work locations have sites selected
         for (const session of data.workSessions) {
           if (!session.siteId) {
-            Alert.alert('Missing site', `Please select a site for all work sessions of ${employee.name}.`);
+            Alert.alert('Missing site', `Please select a site for all work locations of ${employee.name}.`);
             return;
           }
         }
@@ -149,7 +147,6 @@ export default function AttendanceEntryScreen() {
         if (data.isPresent && data.workSessions.length > 0) {
           for (const session of data.workSessions) {
             const sessionWage = calculateDailyWage(employee.baseWageRate, session.workMultiplier);
-            const proportionalWage = sessionWage * session.hoursWorked / 8;
 
             const recordData = {
               employeeId: employee.id,
@@ -157,10 +154,10 @@ export default function AttendanceEntryScreen() {
               date: startOfDay,
               isPresent: true,
               workMultiplier: session.workMultiplier,
-              hoursWorked: session.hoursWorked,
+              hoursWorked: 8, // Keep default for backwards compatibility
               advancePayment: data.workSessions.indexOf(session) === 0 ? data.advancePayment : 0, // Only add advance to first session
               extraPayments: data.workSessions.indexOf(session) === 0 ? (data.extraPayments || []).filter(p => p.description.trim() && p.amount > 0) : [], // Only add extras to first session
-              calculatedWage: proportionalWage,
+              calculatedWage: sessionWage,
             };
 
             await actions.addAttendanceRecord(recordData);
@@ -221,8 +218,7 @@ export default function AttendanceEntryScreen() {
       const newSession: WorkSession = {
         id: generateId(),
         siteId: '',
-        workMultiplier: 1,
-        hoursWorked: 4
+        workMultiplier: 1
       };
       setAttendanceData(prev => ({
         ...prev,
@@ -285,7 +281,6 @@ export default function AttendanceEntryScreen() {
 
     const calculatedWage = calculateEmployeeWage(employee, data);
     const totalExtraPayments = (data.extraPayments || []).reduce((sum, p) => sum + p.amount, 0);
-    const totalHours = data.workSessions.reduce((sum, session) => sum + session.hoursWorked, 0);
     const netPay = calculatedWage + totalExtraPayments - (data.advancePayment || 0);
 
     return (
@@ -296,8 +291,8 @@ export default function AttendanceEntryScreen() {
             {data?.isPresent && (
               <View style={styles.employeeSubtextContainer}>
                 <Text style={styles.employeeSubtext}>
-                  {data.workSessions.length} session{data.workSessions.length !== 1 ? 's' : ''} • 
-                  {totalHours}h total • Net: {formatCurrency(netPay)}
+                  {data.workSessions.length} location{data.workSessions.length !== 1 ? 's' : ''} • 
+                  Net: {formatCurrency(netPay)}
                 </Text>
                 <View style={styles.statusIndicators}>
                   {data.workSessions.length > 0 && (
@@ -342,10 +337,10 @@ export default function AttendanceEntryScreen() {
 
         {data?.isPresent && isExpanded && (
           <View style={styles.attendanceDetails}>
-            {/* Work Sessions */}
+            {/* Work Locations */}
             <View style={styles.workSessionsSection}>
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Work Sessions</Text>
+                <Text style={styles.sectionTitle}>Work Locations</Text>
                 <TouchableOpacity
                   style={styles.addButton}
                   onPress={() => addWorkSession(employee.id)}
@@ -357,7 +352,7 @@ export default function AttendanceEntryScreen() {
               {data.workSessions.map((session, index) => (
                 <View key={session.id} style={styles.workSessionCard}>
                   <View style={styles.sessionHeader}>
-                    <Text style={styles.sessionTitle}>Session {index + 1}</Text>
+                    <Text style={styles.sessionTitle}>Location {index + 1}</Text>
                     <TouchableOpacity
                       style={styles.removeButton}
                       onPress={() => removeWorkSession(employee.id, session.id)}
@@ -375,7 +370,7 @@ export default function AttendanceEntryScreen() {
                   />
 
                   <View style={styles.sessionRow}>
-                    <View style={styles.halfWidth}>
+                    <View style={styles.fullWidth}>
                       <SelectField
                         label="Work Multiplier"
                         options={[{ label: '0.5x', value: '0.5' }, { label: '1.0x', value: '1' }, { label: '1.5x', value: '1.5' }, { label: '2.0x', value: '2' }]}
@@ -384,22 +379,12 @@ export default function AttendanceEntryScreen() {
                         placeholder="Select multiplier..."
                       />
                     </View>
-
-                    <View style={styles.halfWidth}>
-                      <NumberInput
-                        label="Hours Worked"
-                        value={session.hoursWorked.toString()}
-                        onChangeText={(value) => updateWorkSession(employee.id, session.id, 'hoursWorked', parseFloat(value) || 0)}
-                        min={0}
-                        max={12}
-                      />
-                    </View>
                   </View>
                 </View>
               ))}
 
               {data.workSessions.length === 0 && (
-                <Text style={styles.noSessionsText}>No work sessions added. Tap + to add a session.</Text>
+                <Text style={styles.noSessionsText}>No work locations added. Tap + to add a location.</Text>
               )}
             </View>
 
@@ -452,10 +437,6 @@ export default function AttendanceEntryScreen() {
 
             {/* Wage Summary */}
             <View style={styles.wageSummary}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Total Hours:</Text>
-                <Text style={styles.summaryValue}>{totalHours}h</Text>
-              </View>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Calculated Wage:</Text>
                 <Text style={styles.summaryValue}>{formatCurrency(calculatedWage)}</Text>

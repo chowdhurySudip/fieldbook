@@ -19,7 +19,7 @@ interface WorkHistoryRecord {
 interface DailyWorkRecord {
   date: Date;
   totalWage: number;
-  sessions: {
+  locations: {
     siteName: string;
     siteId: string;
     wage: number;
@@ -75,7 +75,7 @@ export default function EmployeeHistoryScreen() {
       .map(([dateStr, records]) => ({
         date: new Date(dateStr),
         totalWage: records.reduce((sum, r) => sum + r.calculatedWage, 0),
-        sessions: records.map(r => ({
+        locations: records.map(r => ({
           siteName: r.siteName,
           siteId: r.siteId,
           wage: r.calculatedWage,
@@ -85,18 +85,18 @@ export default function EmployeeHistoryScreen() {
       .sort((a, b) => b.date.getTime() - a.date.getTime()); // Most recent first
   }, [workHistory]);
 
-  // Get unique sites worked at (now based on sessions, not individual records)
+  // Get unique sites worked at (now based on locations, not individual records)
   const uniqueSites = useMemo(() => {
     const siteData = new Map<string, { siteName: string; totalSessions: number }>();
     
     dailyWorkHistory.forEach(day => {
-      day.sessions.forEach(session => {
-        const existing = siteData.get(session.siteId) || { 
-          siteName: session.siteName, 
+      day.locations.forEach(location => {
+        const existing = siteData.get(location.siteId) || { 
+          siteName: location.siteName, 
           totalSessions: 0 
         };
-        siteData.set(session.siteId, {
-          siteName: session.siteName,
+        siteData.set(location.siteId, {
+          siteName: location.siteName,
           totalSessions: existing.totalSessions + 1
         });
       });
@@ -125,11 +125,11 @@ export default function EmployeeHistoryScreen() {
       
       {/* Table Rows */}
       <View style={styles.tableBody}>
-        {item.sessions.map((session, index) => (
-          <View key={`${session.siteId}-${index}`} style={styles.tableRow}>
-            <Text style={[styles.tableCellText, styles.workplaceColumn]}>{session.siteName}</Text>
-            <Text style={[styles.tableCellText, styles.multiplierColumn]}>{session.multiplier}x</Text>
-            <Text style={[styles.tableCellText, styles.wageColumn]}>{formatCurrency(session.wage)}</Text>
+        {item.locations.map((location, index) => (
+          <View key={`${location.siteId}-${index}`} style={styles.tableRow}>
+            <Text style={[styles.tableCellText, styles.workplaceColumn]}>{location.siteName}</Text>
+            <Text style={[styles.tableCellText, styles.multiplierColumn]}>{location.multiplier}x</Text>
+            <Text style={[styles.tableCellText, styles.wageColumn]}>{formatCurrency(location.wage)}</Text>
           </View>
         ))}
       </View>
